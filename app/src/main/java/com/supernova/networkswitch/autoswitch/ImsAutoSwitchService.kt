@@ -13,6 +13,7 @@ import android.os.IBinder
 import android.telephony.SubscriptionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.supernova.networkswitch.IImsEventListener
 import com.supernova.networkswitch.R
 import com.supernova.networkswitch.domain.model.NetworkMode
 import com.supernova.networkswitch.domain.repository.NetworkControlRepository
@@ -23,14 +24,25 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 /**
- * Foreground service that polls VoLTE availability and lets [ImsSwitchEngine] switch the
- * radio to 4G-only while VoLTE is up, then back to the previous mode when it is gone.
+ * Foreground service that reacts to IMS changes and lets [ImsSwitchEngine] switch the radio
+ * to 4G-only while VoLTE is up, then back to the previous mode when it is gone.
+ *
+ * The privileged process (Shizuku or root) holds `registerImsRegistrationCallback` and
+ * MmTel capability callbacks and pings [imsListener] on every change. A ping only wakes this
+ * service up: it then asks for the VoLTE state twice, a few seconds apart, and feeds both
+ * answers to the engine, so a registration blip does not bounce the radio between modes.
+ *
+ * A slow watchdog re-registers the callbacks now and then, since they die with the IMS
+ * service or the privileged process. If registration is refused, the service falls back to
+ * checking every [FALLBACK_POLL_MS] and says so in its status.
  *
  * Runs while the feature is enabled in [AutoSwitchPreferences]; flipping it off restores the
  * previous mode (if the engine had switched) and stops the service.
@@ -51,12 +63,26 @@ class ImsAutoSwitchService : Service() {
     private var watching = false
     private var lastStatus = ""
 
+    /** Whether the privileged process accepted the IMS callbacks. */
+    private var listening = false
+    private var registeredSubId: Int? = null
+
+    /** Conflated: a burst of IMS events needs one re-check, not one per event. */
+    private val events = Channel<Unit>(Channel.CONFLATED)
+
+    private val imsListener = object : IImsEventListener.Stub() {
+        override fun onImsChanged() {
+            events.trySend(Unit)
+        }
+    }
+
     private val engine = ImsSwitchEngine(
         readMode = { networkControlRepository.getCurrentNetworkMode(currentSubId())?.value },
         writeMode = { mode -> applyMode(mode) },
         loadSavedMode = { autoSwitchPreferences.savedMode() },
         storeSavedMode = { autoSwitchPreferences.setSavedMode(it) },
         nameOf = { NetworkMode.fromValue(it)?.displayName ?: it.toString() },
+        failureCooldown = FAILURE_COOLDOWN_SAMPLES,
     )
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -81,29 +107,62 @@ class ImsAutoSwitchService : Service() {
     private suspend fun observeEnabled() {
         autoSwitchPreferences.enabled.collectLatest { enabled ->
             if (enabled) {
-                pollLoop()
+                watch()
             } else {
                 shutDown()
             }
         }
     }
 
-    private suspend fun pollLoop() {
+    /**
+     * Evaluates once on entry, then again after every IMS event. With no event for
+     * [WATCHDOG_MS] it evaluates anyway and re-registers the callbacks.
+     */
+    private suspend fun watch() {
+        var timedOut = true // first pass registers the callbacks
         while (true) {
             try {
-                val sample = imsStateProvider.volteState(currentSubId())
-                publish(engine.onSample(sample))
+                val subId = currentSubId()
+                if (timedOut || !listening || subId != registeredSubId) {
+                    register(subId)
+                }
+                evaluate()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "VoLTE poll failed", e)
+                Log.e(TAG, "VoLTE check failed", e)
             }
-            delay(POLL_INTERVAL_MS)
+            val waitMs = if (listening) WATCHDOG_MS else FALLBACK_POLL_MS
+            timedOut = withTimeoutOrNull(waitMs) {
+                events.receive()
+                false
+            } ?: true
+        }
+    }
+
+    /**
+     * Registering makes the privileged side report the current state right away, so this
+     * itself queues one more event. That is harmless: registration only happens on a
+     * watchdog timeout or when it was missing, never in reaction to an event.
+     */
+    private suspend fun register(subId: Int) {
+        listening = imsStateProvider.startEvents(subId, imsListener)
+        registeredSubId = if (listening) subId else null
+        if (!listening) Log.w(TAG, "IMS callbacks unavailable for subId=$subId, polling instead")
+    }
+
+    /** Two samples [SETTLE_MS] apart, which is what the engine needs to confirm a change. */
+    private suspend fun evaluate() {
+        repeat(ImsSwitchEngine.DEFAULT_CONFIRMATIONS) { index ->
+            if (index > 0) delay(SETTLE_MS)
+            val sample = imsStateProvider.volteState(currentSubId())
+            publish(engine.onSample(sample))
         }
     }
 
     private suspend fun shutDown() {
         try {
+            imsStateProvider.stopEvents()
             engine.restoreIfActive()?.let { Log.i(TAG, "Auto-switch turned off: $it") }
         } catch (e: CancellationException) {
             throw e
@@ -131,7 +190,8 @@ class ImsAutoSwitchService : Service() {
 
     private fun currentSubId(): Int = SubscriptionManager.getDefaultDataSubscriptionId()
 
-    private suspend fun publish(status: String) {
+    private suspend fun publish(engineStatus: String) {
+        val status = if (listening) engineStatus else "$engineStatus (IMS events unavailable, polling)"
         if (status == lastStatus) return
         lastStatus = status
         autoSwitchPreferences.setStatus(status)
@@ -188,8 +248,21 @@ class ImsAutoSwitchService : Service() {
         private const val TAG = "NetworkSwitch"
         private const val CHANNEL_ID = "volte_auto_switch"
         private const val NOTIFICATION_ID = 4101
-        private const val POLL_INTERVAL_MS = 10_000L
+
+        /** Gap between the two samples taken after an event; also lets capabilities catch up. */
+        private const val SETTLE_MS = 4_000L
+
+        /** Longest quiet spell before the callbacks are re-registered as a precaution. */
+        private const val WATCHDOG_MS = 120_000L
+
+        /** How often to check when the privileged process refuses the IMS callbacks. */
+        private const val FALLBACK_POLL_MS = 10_000L
+
         private const val VERIFY_DELAY_MS = 1_500L
+
+        /** Two evaluations (four samples) is long enough to sit out a failed switch. */
+        private const val FAILURE_COOLDOWN_SAMPLES = 4
+
         private val EQUIVALENT_MODES = setOf(0, 3)
 
         fun start(context: Context) {

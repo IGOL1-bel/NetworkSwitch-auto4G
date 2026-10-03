@@ -167,7 +167,7 @@ private fun AutoSwitchCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Switches to 4G only once VoLTE registers and gives the previous network mode back when VoLTE is gone. Needs the control method above to work. For reliable background operation, exclude this app from battery optimization.",
+                text = "Switches to 4G only once VoLTE registers and gives the previous network mode back when VoLTE is gone. It reacts to IMS registration events instead of polling. Needs the control method above to work. For reliable background operation, exclude this app from battery optimization.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
