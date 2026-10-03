@@ -18,6 +18,12 @@ class RootNetworkControllerService : RootService() {
         override fun setNetworkMode(subId: Int, networkMode: Int) {
             TelephonyReflection.setNetworkMode(subId, networkMode, CALLER)
         }
+
+        override fun getVolteState(subId: Int): Int =
+            TelephonyReflection.getVolteState(subId, CALLER)
+
+        override fun getImsDiagnostics(subId: Int): String =
+            TelephonyReflection.describeIms(subId, CALLER)
     }
 
     private companion object {

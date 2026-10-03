@@ -27,6 +27,12 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         TelephonyReflection.setNetworkMode(subId, networkMode, CALLER)
     }
 
+    override fun getVolteState(subId: Int): Int =
+        TelephonyReflection.getVolteState(subId, CALLER)
+
+    override fun getImsDiagnostics(subId: Int): String =
+        TelephonyReflection.describeIms(subId, CALLER)
+
     override fun destroy() {
         Log.d(TAG, "ShizukuControllerService: destroy")
     }

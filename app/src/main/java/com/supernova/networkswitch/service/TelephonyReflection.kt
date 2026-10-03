@@ -157,5 +157,96 @@ internal object TelephonyReflection {
         return false
     }
 
+    /**
+     * Whether voice over LTE is available through IMS on [subId].
+     *
+     * Wraps `ITelephony.isAvailable(subId, capability, regTech)`, the call behind
+     * `ImsMmTelManager.isAvailable`, asking for the voice capability over the LTE
+     * registration technology. Registration over Wi-Fi calling is deliberately not
+     * counted, so Wi-Fi calling on a 3G cell never reads as VoLTE.
+     *
+     * @return 1 when available, 0 when not, -1 when the call is missing or refused.
+     */
+    fun getVolteState(subId: Int, caller: String): Int {
+        val iTelephony = getITelephony(caller) ?: return -1
+        return when (invokeBoolean(iTelephony, "isAvailable", caller, subId, CAPABILITY_VOICE, REG_TECH_LTE)) {
+            true -> 1
+            false -> 0
+            null -> -1
+        }
+    }
+
+    /**
+     * Describes which IMS-related `ITelephony` methods this firmware exposes and what the
+     * ones we rely on return right now. Meant to be shown to the user when VoLTE detection
+     * does not behave, since OEM builds differ.
+     */
+    fun describeIms(subId: Int, caller: String): String {
+        val iTelephony = getITelephony(caller) ?: return "ITelephony is not reachable from this process"
+        val out = StringBuilder()
+        out.append("subId=").append(subId).append('\n')
+        for (tech in intArrayOf(REG_TECH_LTE, REG_TECH_IWLAN, REG_TECH_NR)) {
+            out.append("isAvailable(voice, tech=").append(tech).append(") = ")
+                .append(invokeBoolean(iTelephony, "isAvailable", caller, subId, CAPABILITY_VOICE, tech))
+                .append('\n')
+        }
+        out.append("isImsRegistered = ")
+            .append(invokeBoolean(iTelephony, "isImsRegistered", caller, subId))
+            .append('\n')
+        out.append("isWifiCallingAvailable = ")
+            .append(invokeBoolean(iTelephony, "isWifiCallingAvailable", caller, subId))
+            .append('\n')
+
+        val interesting = Regex("ims|volte|vowifi|wificalling|isavailable|iscapable", RegexOption.IGNORE_CASE)
+        val signatures = iTelephony.javaClass.methods
+            .filter { interesting.containsMatchIn(it.name) }
+            .map { m -> m.name + "(" + m.parameterTypes.joinToString(",") { it.simpleName } + ")" }
+            .distinct()
+            .sorted()
+        out.append("--- ").append(signatures.size).append(" related methods ---\n")
+        signatures.take(MAX_LISTED_SIGNATURES).forEach { out.append(it).append('\n') }
+        if (signatures.size > MAX_LISTED_SIGNATURES) out.append("...\n")
+        return out.toString()
+    }
+
+    /**
+     * Calls the boolean-returning `ITelephony` method [name] with integer [args], also
+     * trying the overload that takes the calling package as a trailing String.
+     *
+     * @return the result, or null when no overload matched or every call threw.
+     */
+    private fun invokeBoolean(target: Any, name: String, caller: String, vararg args: Int): Boolean? {
+        val intType = Int::class.javaPrimitiveType
+        for (m in target.javaClass.methods.named(name)) {
+            val types = m.parameterTypes
+            val leading = types.take(args.size)
+            val plain = types.size == args.size && leading.all { it == intType }
+            val withPackage = types.size == args.size + 1 &&
+                leading.all { it == intType } &&
+                types.last() == String::class.java
+            if (!plain && !withPackage) continue
+            try {
+                val callArgs = ArrayList<Any>(args.size + 1)
+                args.forEach { callArgs.add(it) }
+                if (withPackage) callArgs.add(PHONE_PACKAGE)
+                val result = m.invoke(target, *callArgs.toTypedArray()) as? Boolean
+                if (result != null) return result
+            } catch (e: Exception) {
+                Log.w(TAG, "$caller: $name failed: ${e.cause ?: e}")
+            }
+        }
+        return null
+    }
+
     private fun Array<Method>.named(name: String) = filter { it.name == name }
+
+    // MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE
+    private const val CAPABILITY_VOICE = 1
+
+    // ImsRegistrationImplBase.REGISTRATION_TECH_*
+    private const val REG_TECH_LTE = 0
+    private const val REG_TECH_IWLAN = 1
+    private const val REG_TECH_NR = 3
+
+    private const val MAX_LISTED_SIGNATURES = 80
 }
