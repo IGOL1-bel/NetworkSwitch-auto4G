@@ -1,8 +1,10 @@
 package com.supernova.networkswitch.service
 
 import android.content.Context
+import android.os.RemoteException
 import android.util.Log
 import androidx.annotation.Keep
+import com.supernova.networkswitch.IImsEventListener
 import com.supernova.networkswitch.IShizukuController
 
 /**
@@ -16,6 +18,8 @@ class ShizukuControllerService() : IShizukuController.Stub() {
     /** Shizuku instantiates the service through this constructor. */
     @Keep
     constructor(context: Context) : this()
+
+    private val imsWatcher = ImsEventWatcher(CALLER)
 
     override fun compatibilityCheck(subId: Int): Boolean =
         getCurrentNetworkMode(subId) != -1
@@ -33,7 +37,24 @@ class ShizukuControllerService() : IShizukuController.Stub() {
     override fun getImsDiagnostics(subId: Int): String =
         TelephonyReflection.describeIms(subId, CALLER)
 
+    override fun startImsEvents(subId: Int, listener: IImsEventListener?): Boolean {
+        if (listener == null) return false
+        return imsWatcher.start(subId) {
+            try {
+                listener.onImsChanged()
+            } catch (e: RemoteException) {
+                // The app process is gone; nobody is left to tell.
+                imsWatcher.stop()
+            }
+        }
+    }
+
+    override fun stopImsEvents() {
+        imsWatcher.stop()
+    }
+
     override fun destroy() {
+        imsWatcher.stop()
         Log.d(TAG, "ShizukuControllerService: destroy")
     }
 

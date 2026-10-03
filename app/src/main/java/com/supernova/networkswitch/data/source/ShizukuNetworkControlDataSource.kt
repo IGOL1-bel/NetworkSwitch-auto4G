@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
+import com.supernova.networkswitch.IImsEventListener
 import com.supernova.networkswitch.IShizukuController
 import com.supernova.networkswitch.domain.model.CompatibilityState
 import com.supernova.networkswitch.domain.model.NetworkMode
@@ -104,6 +105,23 @@ class  ShizukuNetworkControlDataSource @Inject constructor(
     }
 
     override fun isConnected(): Boolean = _isConnected.value
+
+    /** Asks the Shizuku service to report IMS changes on [subId] to [listener]. */
+    suspend fun startImsEvents(subId: Int, listener: IImsEventListener): Boolean {
+        return try {
+            if (ensureServiceBinding()) userService?.startImsEvents(subId, listener) ?: false else false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun stopImsEvents() {
+        try {
+            if (ensureServiceBinding()) userService?.stopImsEvents()
+        } catch (e: Exception) {
+            // Nothing to stop if the service is already gone.
+        }
+    }
 
     override fun resetConnection() {
         userService = null

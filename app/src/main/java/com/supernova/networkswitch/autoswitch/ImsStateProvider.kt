@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.autoswitch
 
+import com.supernova.networkswitch.IImsEventListener
 import com.supernova.networkswitch.data.source.RootNetworkControlDataSource
 import com.supernova.networkswitch.data.source.ShizukuNetworkControlDataSource
 import com.supernova.networkswitch.domain.model.ControlMethod
@@ -36,6 +37,31 @@ class ImsStateProvider @Inject constructor(
                 ControlMethod.SHIZUKU -> shizukuDataSource.getImsDiagnostics(subId)
             }
         } ?: "Timed out waiting for the privileged service"
+    }
+
+    /**
+     * Has the privileged process call [listener] whenever IMS registration or MmTel
+     * capabilities change on [subId]. Replaces an earlier registration and makes the
+     * privileged side report the current state once straight away.
+     *
+     * @return false when the privileged process could not be reached or refused
+     */
+    suspend fun startEvents(subId: Int, listener: IImsEventListener): Boolean {
+        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+            when (preferencesRepository.getControlMethod()) {
+                ControlMethod.ROOT -> rootDataSource.startImsEvents(subId, listener)
+                ControlMethod.SHIZUKU -> shizukuDataSource.startImsEvents(subId, listener)
+            }
+        } ?: false
+    }
+
+    suspend fun stopEvents() {
+        withTimeoutOrNull(CALL_TIMEOUT_MS) {
+            when (preferencesRepository.getControlMethod()) {
+                ControlMethod.ROOT -> rootDataSource.stopImsEvents()
+                ControlMethod.SHIZUKU -> shizukuDataSource.stopImsEvents()
+            }
+        }
     }
 
     private companion object {

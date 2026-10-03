@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import com.supernova.networkswitch.IImsEventListener
 import com.supernova.networkswitch.IRootController
 import com.supernova.networkswitch.service.RootNetworkControllerService
 import com.supernova.networkswitch.domain.model.CompatibilityState
@@ -67,6 +68,23 @@ class RootNetworkControlDataSource @Inject constructor(
     }
 
     override fun isConnected(): Boolean = isServiceConnected
+
+    /** Asks the root service to report IMS changes on [subId] to [listener]. */
+    suspend fun startImsEvents(subId: Int, listener: IImsEventListener): Boolean {
+        return try {
+            getNetworkController()?.startImsEvents(subId, listener) ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    suspend fun stopImsEvents() {
+        try {
+            getNetworkController()?.stopImsEvents()
+        } catch (e: Exception) {
+            // Nothing to stop if the service is already gone.
+        }
+    }
 
     override fun resetConnection() {
         networkController = null
