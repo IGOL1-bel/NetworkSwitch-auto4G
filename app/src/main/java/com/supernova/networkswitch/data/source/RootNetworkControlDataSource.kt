@@ -49,8 +49,25 @@ class RootNetworkControlDataSource @Inject constructor(
         controller?.setNetworkMode(subId, mode.value)
     }
 
+    /** 1 = VoLTE available, 0 = not available, -1 = unknown or root unreachable. */
+    suspend fun getVolteState(subId: Int): Int {
+        return try {
+            getNetworkController()?.getVolteState(subId) ?: -1
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    suspend fun getImsDiagnostics(subId: Int): String {
+        return try {
+            getNetworkController()?.getImsDiagnostics(subId) ?: "Root service returned nothing"
+        } catch (e: Exception) {
+            "Root call failed: ${e.message}"
+        }
+    }
+
     override fun isConnected(): Boolean = isServiceConnected
-    
+
     override fun resetConnection() {
         networkController = null
         isServiceConnected = false

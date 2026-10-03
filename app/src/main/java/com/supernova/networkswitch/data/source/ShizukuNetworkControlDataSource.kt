@@ -82,8 +82,29 @@ class  ShizukuNetworkControlDataSource @Inject constructor(
         }
     }
 
+    /** 1 = VoLTE available, 0 = not available, -1 = unknown or Shizuku unreachable. */
+    suspend fun getVolteState(subId: Int): Int {
+        return try {
+            if (ensureServiceBinding()) userService?.getVolteState(subId) ?: -1 else -1
+        } catch (e: Exception) {
+            -1
+        }
+    }
+
+    suspend fun getImsDiagnostics(subId: Int): String {
+        return try {
+            if (ensureServiceBinding()) {
+                userService?.getImsDiagnostics(subId) ?: "Shizuku service returned nothing"
+            } else {
+                "Shizuku is not running or permission is not granted"
+            }
+        } catch (e: Exception) {
+            "Shizuku call failed: ${e.message}"
+        }
+    }
+
     override fun isConnected(): Boolean = _isConnected.value
-    
+
     override fun resetConnection() {
         userService = null
         _isConnected.value = false

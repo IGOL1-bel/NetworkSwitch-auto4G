@@ -1,15 +1,21 @@
 package com.supernova.networkswitch.presentation.ui.activity
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -23,24 +29,28 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.supernova.networkswitch.domain.model.CompatibilityState
 import com.supernova.networkswitch.domain.model.ControlMethod
 import com.supernova.networkswitch.presentation.theme.NetworkSwitchTheme
+import com.supernova.networkswitch.presentation.viewmodel.AutoSwitchViewModel
 import com.supernova.networkswitch.presentation.viewmodel.SettingsViewModel
 import dagger.hilt.android.AndroidEntryPoint
 
 @AndroidEntryPoint
 class SettingsActivity : ComponentActivity() {
-    
+
     private val viewModel: SettingsViewModel by viewModels()
+    private val autoSwitchViewModel: AutoSwitchViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         setContent {
             NetworkSwitchTheme {
                 SettingsScreen(
                     viewModel = viewModel,
+                    autoSwitchViewModel = autoSwitchViewModel,
                     onBackClick = { finish() }
                 )
             }
@@ -52,10 +62,17 @@ class SettingsActivity : ComponentActivity() {
 @Composable
 private fun SettingsScreen(
     viewModel: SettingsViewModel,
+    autoSwitchViewModel: AutoSwitchViewModel,
     onBackClick: () -> Unit
 ) {
     val controlMethod by viewModel.controlMethod.collectAsState()
-    
+    val autoSwitchEnabled by autoSwitchViewModel.enabled.collectAsState()
+    val autoSwitchStatus by autoSwitchViewModel.status.collectAsState()
+    val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* The service runs either way; the permission only makes its notification visible. */ }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -88,8 +105,101 @@ private fun SettingsScreen(
                 onRetryClick = { viewModel.retryCompatibilityCheck() }
             )
             
+            // VoLTE auto-switch
+            AutoSwitchCard(
+                enabled = autoSwitchEnabled,
+                status = autoSwitchStatus,
+                diagnostics = autoSwitchViewModel.diagnostics,
+                diagnosticsRunning = autoSwitchViewModel.diagnosticsRunning,
+                onEnabledChange = { enable ->
+                    if (enable &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    autoSwitchViewModel.setEnabled(enable)
+                },
+                onDiagnosticsClick = { autoSwitchViewModel.runDiagnostics() }
+            )
+
             // About Section
             AboutCard()
+        }
+    }
+}
+
+@Composable
+private fun AutoSwitchCard(
+    enabled: Boolean,
+    status: String,
+    diagnostics: String?,
+    diagnosticsRunning: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    onDiagnosticsClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "4G only while VoLTE is available",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Switch(checked = enabled, onCheckedChange = onEnabledChange)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Switches to 4G only once VoLTE registers and gives the previous network mode back when VoLTE is gone. Needs the control method above to work. For reliable background operation, exclude this app from battery optimization.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (enabled && status.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            OutlinedButton(
+                onClick = onDiagnosticsClick,
+                enabled = !diagnosticsRunning
+            ) {
+                Text(if (diagnosticsRunning) "Checking..." else "Check VoLTE detection")
+            }
+
+            if (diagnostics != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                SelectionContainer {
+                    Text(
+                        text = diagnostics,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
     }
 }
