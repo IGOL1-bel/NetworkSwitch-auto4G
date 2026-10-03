@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** How the service finds out that VoLTE appeared or went away. */
+enum class DetectionMode { EVENTS, POLLING }
+
 /** Persistent state of the VoLTE auto-switch, kept apart from the main preferences. */
 @Singleton
 class AutoSwitchPreferences @Inject constructor(
@@ -26,6 +29,22 @@ class AutoSwitchPreferences @Inject constructor(
     val status: Flow<String> = dataStore.data
         .map { it[STATUS_KEY] ?: "" }
         .distinctUntilChanged()
+
+    val detectionMode: Flow<DetectionMode> = dataStore.data
+        .map { if (it[MODE_KEY] == POLLING_VALUE) DetectionMode.POLLING else DetectionMode.EVENTS }
+        .distinctUntilChanged()
+
+    val pollIntervalSec: Flow<Int> = dataStore.data
+        .map { (it[POLL_INTERVAL_KEY] ?: DEFAULT_POLL_SEC).coerceIn(MIN_POLL_SEC, MAX_POLL_SEC) }
+        .distinctUntilChanged()
+
+    suspend fun setDetectionMode(mode: DetectionMode) {
+        dataStore.edit { it[MODE_KEY] = if (mode == DetectionMode.POLLING) POLLING_VALUE else EVENTS_VALUE }
+    }
+
+    suspend fun setPollIntervalSec(seconds: Int) {
+        dataStore.edit { it[POLL_INTERVAL_KEY] = seconds.coerceIn(MIN_POLL_SEC, MAX_POLL_SEC) }
+    }
 
     suspend fun isEnabled(): Boolean = enabled.first()
 
@@ -45,9 +64,17 @@ class AutoSwitchPreferences @Inject constructor(
         dataStore.edit { it[SAVED_MODE_KEY] = mode }
     }
 
-    private companion object {
-        val ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_enabled")
-        val STATUS_KEY = stringPreferencesKey("volte_auto_switch_status")
-        val SAVED_MODE_KEY = intPreferencesKey("volte_auto_switch_saved_mode")
+    companion object {
+        const val MIN_POLL_SEC = 5
+        const val MAX_POLL_SEC = 120
+        const val DEFAULT_POLL_SEC = 10
+        private const val EVENTS_VALUE = "events"
+        private const val POLLING_VALUE = "polling"
+
+        private val MODE_KEY = stringPreferencesKey("volte_auto_switch_detection_mode")
+        private val POLL_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_poll_interval_sec")
+        private val ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_enabled")
+        private val STATUS_KEY = stringPreferencesKey("volte_auto_switch_status")
+        private val SAVED_MODE_KEY = intPreferencesKey("volte_auto_switch_saved_mode")
     }
 }

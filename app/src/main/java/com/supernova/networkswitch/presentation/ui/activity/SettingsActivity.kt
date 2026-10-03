@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -30,6 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.supernova.networkswitch.autoswitch.AutoSwitchPreferences
+import com.supernova.networkswitch.autoswitch.DetectionMode
 import com.supernova.networkswitch.domain.model.CompatibilityState
 import com.supernova.networkswitch.domain.model.ControlMethod
 import com.supernova.networkswitch.presentation.theme.NetworkSwitchTheme
@@ -68,6 +72,8 @@ private fun SettingsScreen(
     val controlMethod by viewModel.controlMethod.collectAsState()
     val autoSwitchEnabled by autoSwitchViewModel.enabled.collectAsState()
     val autoSwitchStatus by autoSwitchViewModel.status.collectAsState()
+    val detectionMode by autoSwitchViewModel.detectionMode.collectAsState()
+    val pollIntervalSec by autoSwitchViewModel.pollIntervalSec.collectAsState()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -109,6 +115,10 @@ private fun SettingsScreen(
             AutoSwitchCard(
                 enabled = autoSwitchEnabled,
                 status = autoSwitchStatus,
+                detectionMode = detectionMode,
+                pollIntervalSec = pollIntervalSec,
+                onDetectionModeChange = { autoSwitchViewModel.setDetectionMode(it) },
+                onPollIntervalChange = { autoSwitchViewModel.setPollIntervalSec(it) },
                 diagnostics = autoSwitchViewModel.diagnostics,
                 diagnosticsRunning = autoSwitchViewModel.diagnosticsRunning,
                 onEnabledChange = { enable ->
@@ -136,6 +146,10 @@ private fun SettingsScreen(
 private fun AutoSwitchCard(
     enabled: Boolean,
     status: String,
+    detectionMode: DetectionMode,
+    pollIntervalSec: Int,
+    onDetectionModeChange: (DetectionMode) -> Unit,
+    onPollIntervalChange: (Int) -> Unit,
     diagnostics: String?,
     diagnosticsRunning: Boolean,
     onEnabledChange: (Boolean) -> Unit,
@@ -167,10 +181,60 @@ private fun AutoSwitchCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Switches to 4G only once VoLTE registers and gives the previous network mode back when VoLTE is gone. It reacts to IMS registration events instead of polling. Needs the control method above to work. For reliable background operation, exclude this app from battery optimization.",
+                text = "Switches to 4G only once VoLTE registers and gives the previous network mode back when VoLTE is gone. Needs the control method above to work. For reliable background operation, exclude this app from battery optimization.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "How to detect VoLTE",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium
+            )
+            DetectionModeOption(
+                selected = detectionMode == DetectionMode.EVENTS,
+                title = "IMS events",
+                description = "Reacts when IMS registration changes. Lowest battery use.",
+                onClick = { onDetectionModeChange(DetectionMode.EVENTS) }
+            )
+            DetectionModeOption(
+                selected = detectionMode == DetectionMode.POLLING,
+                title = "Periodic polling",
+                description = "Asks for the VoLTE state at a fixed interval. Keeps the CPU awake, so it uses more battery.",
+                onClick = { onDetectionModeChange(DetectionMode.POLLING) }
+            )
+            if (detectionMode == DetectionMode.POLLING) {
+                var sliderValue by remember(pollIntervalSec) { mutableFloatStateOf(pollIntervalSec.toFloat()) }
+                Text(
+                    text = "Check every ${sliderValue.toInt()} s",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = sliderValue,
+                    onValueChange = { sliderValue = it },
+                    onValueChangeFinished = { onPollIntervalChange(sliderValue.toInt()) },
+                    valueRange = AutoSwitchPreferences.MIN_POLL_SEC.toFloat()..AutoSwitchPreferences.MAX_POLL_SEC.toFloat()
+                )
+            }
+
+            val context = LocalContext.current
+            val powerManager = context.getSystemService(PowerManager::class.java)
+            if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    }
+                ) {
+                    Text("Exclude from battery optimization")
+                }
+            }
 
             if (enabled && status.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -200,6 +264,33 @@ private fun AutoSwitchCard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DetectionModeOption(
+    selected: Boolean,
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(selected = selected, onClick = onClick)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

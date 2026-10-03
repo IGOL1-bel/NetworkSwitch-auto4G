@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.telephony.SubscriptionManager
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -27,6 +28,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -67,11 +70,33 @@ class ImsAutoSwitchService : Service() {
     private var listening = false
     private var registeredSubId: Int? = null
 
+    /** Set while the user picked polling; changes the status note. */
+    private var pollingSeconds: Int? = null
+
+    /**
+     * Keeps the CPU up for the few seconds an event needs. Without it the phone can go back to
+     * sleep right after the event woke it, and the second sample (a coroutine timer) only
+     * fires on the next wake-up, e.g. when the app is opened. Timed, so never left held.
+     */
+    private val eventWakeLock by lazy {
+        getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NetworkSwitch:volteEvent")
+            .apply { setReferenceCounted(false) }
+    }
+
+    /** Held for as long as polling mode runs, since a poll timer cannot fire in deep sleep. */
+    private val pollWakeLock by lazy {
+        getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "NetworkSwitch:volteHoldAwake")
+            .apply { setReferenceCounted(false) }
+    }
+
     /** Conflated: a burst of IMS events needs one re-check, not one per event. */
     private val events = Channel<Unit>(Channel.CONFLATED)
 
     private val imsListener = object : IImsEventListener.Stub() {
         override fun onImsChanged() {
+            eventWakeLock.acquire(EVENT_WAKE_MS)
             events.trySend(Unit)
         }
     }
@@ -102,16 +127,24 @@ class ImsAutoSwitchService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         scope.cancel()
+        runCatching { if (pollWakeLock.isHeld) pollWakeLock.release() }
+        runCatching { if (eventWakeLock.isHeld) eventWakeLock.release() }
     }
 
     private suspend fun observeEnabled() {
-        autoSwitchPreferences.enabled.collectLatest { enabled ->
-            if (enabled) {
-                watch()
-            } else {
-                shutDown()
+        combine(
+            autoSwitchPreferences.enabled,
+            autoSwitchPreferences.detectionMode,
+            autoSwitchPreferences.pollIntervalSec,
+        ) { enabled, mode, interval -> Settings(enabled, mode, interval) }
+            .distinctUntilChanged()
+            .collectLatest { settings ->
+                when {
+                    !settings.enabled -> shutDown()
+                    settings.mode == DetectionMode.POLLING -> poll(settings.intervalSec)
+                    else -> watch()
+                }
             }
-        }
     }
 
     /**
@@ -119,6 +152,8 @@ class ImsAutoSwitchService : Service() {
      * [WATCHDOG_MS] it evaluates anyway and re-registers the callbacks.
      */
     private suspend fun watch() {
+        pollingSeconds = null
+        lastStatus = ""
         var timedOut = true // first pass registers the callbacks
         while (true) {
             try {
@@ -141,6 +176,34 @@ class ImsAutoSwitchService : Service() {
     }
 
     /**
+     * Polling mode: one VoLTE sample every [intervalSec] seconds, and the engine confirms a change
+     * after two identical samples in a row. The IMS callbacks are dropped, and the CPU is kept
+     * awake while this runs, otherwise the timer stalls whenever the phone sleeps.
+     */
+    private suspend fun poll(intervalSec: Int) {
+        imsStateProvider.stopEvents()
+        listening = false
+        registeredSubId = null
+        pollingSeconds = intervalSec
+        lastStatus = ""
+        pollWakeLock.acquire()
+        try {
+            while (true) {
+                try {
+                    publish(engine.onSample(imsStateProvider.volteState(currentSubId())))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e(TAG, "VoLTE check failed", e)
+                }
+                delay(intervalSec * 1_000L)
+            }
+        } finally {
+            if (pollWakeLock.isHeld) pollWakeLock.release()
+        }
+    }
+
+    /**
      * Registering makes the privileged side report the current state right away, so this
      * itself queues one more event. That is harmless: registration only happens on a
      * watchdog timeout or when it was missing, never in reaction to an event.
@@ -153,6 +216,7 @@ class ImsAutoSwitchService : Service() {
 
     /** Two samples [SETTLE_MS] apart, which is what the engine needs to confirm a change. */
     private suspend fun evaluate() {
+        eventWakeLock.acquire(EVENT_WAKE_MS)
         repeat(ImsSwitchEngine.DEFAULT_CONFIRMATIONS) { index ->
             if (index > 0) delay(SETTLE_MS)
             val sample = imsStateProvider.volteState(currentSubId())
@@ -191,7 +255,12 @@ class ImsAutoSwitchService : Service() {
     private fun currentSubId(): Int = SubscriptionManager.getDefaultDataSubscriptionId()
 
     private suspend fun publish(engineStatus: String) {
-        val status = if (listening) engineStatus else "$engineStatus (IMS events unavailable, polling)"
+        val seconds = pollingSeconds
+        val status = when {
+            seconds != null -> "$engineStatus (polling every $seconds s)"
+            listening -> engineStatus
+            else -> "$engineStatus (IMS events unavailable, polling)"
+        }
         if (status == lastStatus) return
         lastStatus = status
         autoSwitchPreferences.setStatus(status)
@@ -244,6 +313,8 @@ class ImsAutoSwitchService : Service() {
             .build()
     }
 
+    private data class Settings(val enabled: Boolean, val mode: DetectionMode, val intervalSec: Int)
+
     companion object {
         private const val TAG = "NetworkSwitch"
         private const val CHANNEL_ID = "volte_auto_switch"
@@ -257,6 +328,9 @@ class ImsAutoSwitchService : Service() {
 
         /** How often to check when the privileged process refuses the IMS callbacks. */
         private const val FALLBACK_POLL_MS = 10_000L
+
+        /** Covers an evaluation (two samples, a switch and its read-back) with room to spare. */
+        private const val EVENT_WAKE_MS = 30_000L
 
         private const val VERIFY_DELAY_MS = 1_500L
 
