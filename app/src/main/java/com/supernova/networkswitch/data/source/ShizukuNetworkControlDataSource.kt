@@ -33,6 +33,20 @@ class  ShizukuNetworkControlDataSource @Inject constructor(
         private const val SHIZUKU_PERMISSION_REQUEST_ID = 8
     }
 
+    /**
+     * Asks Shizuku to show its grant dialog. Without this call the app never appears in
+     * Shizuku's list, so there is nothing to allow. Does nothing if the user already chose
+     * "deny and don't ask again" (the dialog would not show; Shizuku's own app has to be used).
+     */
+    private fun requestShizukuPermission() {
+        try {
+            if (Shizuku.isPreV11() || Shizuku.shouldShowRequestPermissionRationale()) return
+            Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST_ID)
+        } catch (e: Exception) {
+            // Shizuku went away between the checks; the caller reports the state anyway.
+        }
+    }
+
     override suspend fun checkCompatibility(subId: Int): CompatibilityState {
         return try {
             // Check if Shizuku service is running
@@ -48,6 +62,7 @@ class  ShizukuNetworkControlDataSource @Inject constructor(
             }
             
             if (permission != PackageManager.PERMISSION_GRANTED) {
+                requestShizukuPermission()
                 return CompatibilityState.PermissionDenied(com.supernova.networkswitch.domain.model.ControlMethod.SHIZUKU)
             }
             
