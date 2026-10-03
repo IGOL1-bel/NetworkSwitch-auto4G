@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.supernova.networkswitch.autoswitch.AutoSwitchPreferences
+import com.supernova.networkswitch.autoswitch.DetectionMode
 import com.supernova.networkswitch.autoswitch.ImsAutoSwitchService
 import com.supernova.networkswitch.autoswitch.ImsStateProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -31,6 +32,20 @@ class AutoSwitchViewModel @Inject constructor(
 
     val status: StateFlow<String> = autoSwitchPreferences.status
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val detectionMode: StateFlow<DetectionMode> = autoSwitchPreferences.detectionMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DetectionMode.EVENTS)
+
+    val pollIntervalSec: StateFlow<Int> = autoSwitchPreferences.pollIntervalSec
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_POLL_SEC)
+
+    fun setDetectionMode(mode: DetectionMode) {
+        viewModelScope.launch { autoSwitchPreferences.setDetectionMode(mode) }
+    }
+
+    fun setPollIntervalSec(seconds: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setPollIntervalSec(seconds) }
+    }
 
     var diagnostics by mutableStateOf<String?>(null)
         private set
