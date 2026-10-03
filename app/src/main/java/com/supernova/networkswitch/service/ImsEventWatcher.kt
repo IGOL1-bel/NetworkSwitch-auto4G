@@ -1,7 +1,10 @@
 package com.supernova.networkswitch.service
 
 import android.content.Context
+import android.os.Binder
 import android.os.Build
+import android.os.IBinder
+import android.os.Parcel
 import android.telephony.ims.ImsManager
 import android.telephony.ims.ImsMmTelManager
 import android.telephony.ims.ImsReasonInfo
@@ -40,6 +43,10 @@ internal class ImsEventWatcher(
     private var registrationCallback: RegistrationManager.RegistrationCallback? = null
     private var capabilityCallback: ImsMmTelManager.CapabilityCallback? = null
 
+    private var rawBinder: IBinder? = null
+    private var rawCallback: Binder? = null
+    private var rawSubId = -1
+
     /** Outcome of the last [start], for the diagnostics screen. */
     @Volatile
     var status: String = "not started"
@@ -58,15 +65,26 @@ internal class ImsEventWatcher(
             status = "failed: needs Android 12+"
             return@synchronized false
         }
-        val context = contextProvider()
-        if (context == null) {
-            Log.w(TAG, "$caller: no Context available for ImsManager")
-            status = "failed: no Context (service created without one)"
-            return@synchronized false
-        }
+        val sdkError = startViaSdk(subId, onChange)
+        if (sdkError == null) return@synchronized true
 
+        // The SDK path needs an app-like process (TelephonyServiceManager is null in the
+        // app_process Shizuku starts), so talk to the phone service directly instead.
+        val rawError = startViaTelephonyBinder(subId, onChange)
+        if (rawError == null) {
+            status = "ok via ITelephony (subId=$subId); SDK path failed: $sdkError"
+            Log.i(TAG, "$caller: watching IMS registration through ITelephony for subId=$subId")
+            return@synchronized true
+        }
+        status = "failed: SDK: $sdkError | ITelephony: $rawError"
+        false
+    }
+
+    /** @return null on success, otherwise a short reason */
+    private fun startViaSdk(subId: Int, onChange: () -> Unit): String? {
+        val context = contextProvider() ?: return "no Context"
         val newExecutor = Executors.newSingleThreadExecutor()
-        try {
+        return try {
             val imsManager = context.getSystemService(ImsManager::class.java)
                 ?: throw IllegalStateException("ImsManager is not available")
             val mmTel = imsManager.getImsMmTelManager(subId)
@@ -82,7 +100,6 @@ internal class ImsEventWatcher(
             manager = mmTel
             registrationCallback = registration
 
-            // A second trigger, not fatal if the platform refuses it.
             try {
                 val capability = object : ImsMmTelManager.CapabilityCallback() {
                     override fun onCapabilitiesStatusChanged(capabilities: MmTelFeature.MmTelCapabilities) = onChange()
@@ -91,18 +108,67 @@ internal class ImsEventWatcher(
                 capabilityCallback = capability
             } catch (e: Throwable) {
                 Log.w(TAG, "$caller: MmTel capability callback not registered", e)
-                status = "ok, but capability callback failed: ${e.javaClass.simpleName}: ${e.message}"
             }
-
-            status = "ok (subId=$subId)"
+            status = "ok via SDK (subId=$subId)"
             Log.i(TAG, "$caller: watching IMS registration for subId=$subId")
-            true
+            null
         } catch (e: Throwable) {
-            Log.w(TAG, "$caller: IMS registration callback refused for subId=$subId", e)
-            status = "failed: ${e.javaClass.simpleName}: ${e.message}"
+            Log.w(TAG, "$caller: SDK IMS registration refused for subId=$subId", e)
             newExecutor.shutdown()
             stopLocked()
-            false
+            "${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    /**
+     * Registers a hand-made binder as `IImsRegistrationCallback` straight on the phone service.
+     * Every call the phone process makes on it is one-way and only means "IMS state changed", so
+     * the arguments are ignored and no AIDL stub is needed. @return null on success
+     */
+    private fun startViaTelephonyBinder(subId: Int, onChange: () -> Unit): String? {
+        return try {
+            val binder = TelephonyReflection.telephonyBinder(caller)
+                ?: return "phone service not found"
+            val registerCode = telephonyTransactionCode("registerImsRegistrationCallback")
+            val callback = object : Binder() {
+                override fun onTransact(code: Int, data: Parcel, reply: Parcel?, flags: Int): Boolean {
+                    if (code in IBinder.FIRST_CALL_TRANSACTION..IBinder.LAST_CALL_TRANSACTION) {
+                        onChange()
+                        return true
+                    }
+                    return super.onTransact(code, data, reply, flags)
+                }
+            }
+            transactRegistration(binder, registerCode, subId, callback)
+            rawBinder = binder
+            rawCallback = callback
+            rawSubId = subId
+            null
+        } catch (e: Throwable) {
+            Log.w(TAG, "$caller: ITelephony IMS registration failed for subId=$subId", e)
+            "${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    private fun telephonyTransactionCode(method: String): Int {
+        val field = Class.forName("com.android.internal.telephony.ITelephony\$Stub")
+            .getDeclaredField("TRANSACTION_$method")
+        field.isAccessible = true
+        return field.getInt(null)
+    }
+
+    private fun transactRegistration(binder: IBinder, code: Int, subId: Int, callback: Binder) {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        try {
+            data.writeInterfaceToken(TELEPHONY_DESCRIPTOR)
+            data.writeInt(subId)
+            data.writeStrongBinder(callback)
+            binder.transact(code, data, reply, 0)
+            reply.readException()
+        } finally {
+            data.recycle()
+            reply.recycle()
         }
     }
 
@@ -114,6 +180,15 @@ internal class ImsEventWatcher(
             registrationCallback?.let { runCatching { mmTel.unregisterImsRegistrationCallback(it) } }
             capabilityCallback?.let { runCatching { mmTel.unregisterMmTelCapabilityCallback(it) } }
         }
+        val raw = rawBinder
+        val rawCb = rawCallback
+        if (raw != null && rawCb != null) {
+            runCatching {
+                transactRegistration(raw, telephonyTransactionCode("unregisterImsRegistrationCallback"), rawSubId, rawCb)
+            }
+        }
+        rawBinder = null
+        rawCallback = null
         executor?.shutdown()
         executor = null
         manager = null
@@ -123,5 +198,6 @@ internal class ImsEventWatcher(
 
     private companion object {
         const val TAG = "NetworkSwitch"
+        const val TELEPHONY_DESCRIPTOR = "com.android.internal.telephony.ITelephony"
     }
 }
