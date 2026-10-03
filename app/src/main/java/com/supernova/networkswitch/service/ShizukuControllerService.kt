@@ -17,9 +17,13 @@ class ShizukuControllerService() : IShizukuController.Stub() {
 
     /** Shizuku instantiates the service through this constructor. */
     @Keep
-    constructor(context: Context) : this()
+    constructor(context: Context) : this() {
+        this.context = context
+    }
 
-    private val imsWatcher = ImsEventWatcher(CALLER)
+    private var context: Context? = null
+
+    private val imsWatcher = ImsEventWatcher(CALLER) { context }
 
     override fun compatibilityCheck(subId: Int): Boolean =
         getCurrentNetworkMode(subId) != -1

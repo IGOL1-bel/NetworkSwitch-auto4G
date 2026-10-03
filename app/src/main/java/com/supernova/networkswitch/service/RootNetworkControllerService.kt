@@ -9,7 +9,7 @@ import com.topjohnwu.superuser.ipc.RootService
 /** libsu root service for network control. Runs as root in a separate process. */
 class RootNetworkControllerService : RootService() {
 
-    private val imsWatcher = ImsEventWatcher(CALLER)
+    private val imsWatcher = ImsEventWatcher(CALLER) { this }
 
     override fun onBind(intent: Intent) = object : IRootController.Stub() {
 
