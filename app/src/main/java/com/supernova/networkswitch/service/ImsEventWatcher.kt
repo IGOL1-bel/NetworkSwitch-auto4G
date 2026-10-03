@@ -40,6 +40,11 @@ internal class ImsEventWatcher(
     private var registrationCallback: RegistrationManager.RegistrationCallback? = null
     private var capabilityCallback: ImsMmTelManager.CapabilityCallback? = null
 
+    /** Outcome of the last [start], for the diagnostics screen. */
+    @Volatile
+    var status: String = "not started"
+        private set
+
     /**
      * Starts watching [subId], replacing any earlier registration.
      * Registering delivers the current state once, as an ordinary change.
@@ -50,11 +55,13 @@ internal class ImsEventWatcher(
         stopLocked()
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             Log.w(TAG, "$caller: IMS callbacks need Android 12 or newer")
+            status = "failed: needs Android 12+"
             return@synchronized false
         }
         val context = contextProvider()
         if (context == null) {
             Log.w(TAG, "$caller: no Context available for ImsManager")
+            status = "failed: no Context (service created without one)"
             return@synchronized false
         }
 
@@ -84,12 +91,15 @@ internal class ImsEventWatcher(
                 capabilityCallback = capability
             } catch (e: Throwable) {
                 Log.w(TAG, "$caller: MmTel capability callback not registered", e)
+                status = "ok, but capability callback failed: ${e.javaClass.simpleName}: ${e.message}"
             }
 
+            status = "ok (subId=$subId)"
             Log.i(TAG, "$caller: watching IMS registration for subId=$subId")
             true
         } catch (e: Throwable) {
             Log.w(TAG, "$caller: IMS registration callback refused for subId=$subId", e)
+            status = "failed: ${e.javaClass.simpleName}: ${e.message}"
             newExecutor.shutdown()
             stopLocked()
             false
