@@ -5,17 +5,16 @@ import android.telephony.ims.ImsMmTelManager
 import android.telephony.ims.ImsReasonInfo
 import android.telephony.ims.ImsRegistrationAttributes
 import android.telephony.ims.RegistrationManager
-import android.telephony.ims.feature.MmTelFeature
 import android.util.Log
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 /**
- * Subscribes to IMS registration and MmTel capability changes through the public
- * [ImsMmTelManager] API and reports each one through a plain callback.
+ * Subscribes to IMS registration changes through the public [ImsMmTelManager] API
+ * (`registerImsRegistrationCallback`) and reports each one through a plain callback.
  *
- * Must run in a privileged process (Shizuku user service or root service): the callbacks
- * need READ_PRECISE_PHONE_STATE, which the app process does not hold.
+ * Must run in a privileged process (Shizuku user service or root service): the callback
+ * needs READ_PRECISE_PHONE_STATE, which the app process does not hold.
  *
  * It only says that *something* changed. What the change means is left to whoever listens,
  * which asks for the VoLTE state again, because a registration event alone does not say
@@ -27,7 +26,6 @@ internal class ImsEventWatcher(private val caller: String) {
     private var executor: ExecutorService? = null
     private var manager: ImsMmTelManager? = null
     private var registrationCallback: RegistrationManager.RegistrationCallback? = null
-    private var capabilityCallback: ImsMmTelManager.CapabilityCallback? = null
 
     /**
      * Starts watching [subId], replacing any earlier registration.
@@ -57,19 +55,7 @@ internal class ImsEventWatcher(private val caller: String) {
             manager = mmTel
             registrationCallback = registration
 
-            // Capability changes can follow registration without another registration
-            // event, so this is a second trigger. Not fatal if the platform refuses it.
-            try {
-                val capability = object : ImsMmTelManager.CapabilityCallback() {
-                    override fun onCapabilitiesStatusChanged(capabilities: MmTelFeature.MmTelCapabilities) = onChange()
-                }
-                mmTel.registerMmTelCapabilityCallback(newExecutor, capability)
-                capabilityCallback = capability
-            } catch (e: Throwable) {
-                Log.w(TAG, "$caller: MmTel capability callback not registered", e)
-            }
-
-            Log.i(TAG, "$caller: watching IMS events for subId=$subId")
+            Log.i(TAG, "$caller: watching IMS registration for subId=$subId")
             true
         } catch (e: Throwable) {
             Log.w(TAG, "$caller: IMS registration callback refused for subId=$subId", e)
@@ -83,15 +69,14 @@ internal class ImsEventWatcher(private val caller: String) {
 
     private fun stopLocked() {
         val mmTel = manager
-        if (mmTel != null) {
-            registrationCallback?.let { runCatching { mmTel.unregisterImsRegistrationCallback(it) } }
-            capabilityCallback?.let { runCatching { mmTel.unregisterMmTelCapabilityCallback(it) } }
+        val callback = registrationCallback
+        if (mmTel != null && callback != null) {
+            runCatching { mmTel.unregisterImsRegistrationCallback(callback) }
         }
         executor?.shutdown()
         executor = null
         manager = null
         registrationCallback = null
-        capabilityCallback = null
     }
 
     private companion object {
