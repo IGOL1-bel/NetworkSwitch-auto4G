@@ -43,6 +43,17 @@ internal object TelephonyReflection {
         }
     }
 
+    /** The raw `phone` service binder, for calls that need hand-built transactions. */
+    fun telephonyBinder(caller: String): IBinder? = try {
+        hiddenApiExempted
+        Class.forName("android.os.ServiceManager")
+            .getMethod("getService", String::class.java)
+            .invoke(null, Context.TELEPHONY_SERVICE) as? IBinder
+    } catch (e: Exception) {
+        Log.e(TAG, "$caller: Failed to get telephony binder", e)
+        null
+    }
+
     private fun getITelephony(caller: String): Any? = try {
         hiddenApiExempted // read to trigger the one-time exemption
         val binder = Class.forName("android.os.ServiceManager")

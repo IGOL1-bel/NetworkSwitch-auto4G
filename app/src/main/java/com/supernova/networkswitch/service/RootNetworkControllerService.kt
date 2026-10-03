@@ -27,7 +27,8 @@ class RootNetworkControllerService : RootService() {
             TelephonyReflection.getVolteState(subId, CALLER)
 
         override fun getImsDiagnostics(subId: Int): String =
-            TelephonyReflection.describeIms(subId, CALLER)
+            TelephonyReflection.describeIms(subId, CALLER) +
+                "\nIMS events: ${imsWatcher.status}"
 
         override fun startImsEvents(subId: Int, listener: IImsEventListener?): Boolean {
             if (listener == null) return false
