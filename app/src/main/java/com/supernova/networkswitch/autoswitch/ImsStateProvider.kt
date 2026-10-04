@@ -5,7 +5,13 @@ import com.supernova.networkswitch.data.source.RootNetworkControlDataSource
 import com.supernova.networkswitch.data.source.ShizukuNetworkControlDataSource
 import com.supernova.networkswitch.domain.model.ControlMethod
 import com.supernova.networkswitch.domain.repository.PreferencesRepository
+import com.supernova.networkswitch.util.AppLog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeoutOrNull
+import android.os.SystemClock
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -22,7 +28,7 @@ class ImsStateProvider @Inject constructor(
 
     /** [ImsSwitchEngine.SAMPLE_VOLTE], [ImsSwitchEngine.SAMPLE_NO_VOLTE] or unknown. */
     suspend fun volteState(subId: Int): Int {
-        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+        return timed("volteState") {
             when (preferencesRepository.getControlMethod()) {
                 ControlMethod.ROOT -> rootDataSource.getVolteState(subId)
                 ControlMethod.SHIZUKU -> shizukuDataSource.getVolteState(subId)
@@ -31,7 +37,7 @@ class ImsStateProvider @Inject constructor(
     }
 
     suspend fun diagnostics(subId: Int): String {
-        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+        return timed("diagnostics") {
             when (preferencesRepository.getControlMethod()) {
                 ControlMethod.ROOT -> rootDataSource.getImsDiagnostics(subId)
                 ControlMethod.SHIZUKU -> shizukuDataSource.getImsDiagnostics(subId)
@@ -47,7 +53,7 @@ class ImsStateProvider @Inject constructor(
      * @return false when the privileged process could not be reached or refused
      */
     suspend fun startEvents(subId: Int, listener: IImsEventListener): Boolean {
-        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+        return timed("startEvents") {
             when (preferencesRepository.getControlMethod()) {
                 ControlMethod.ROOT -> rootDataSource.startImsEvents(subId, listener)
                 ControlMethod.SHIZUKU -> shizukuDataSource.startImsEvents(subId, listener)
@@ -57,7 +63,7 @@ class ImsStateProvider @Inject constructor(
 
     /** @return false when the command failed or the privileged process could not be reached */
     suspend fun setAirplaneMode(enabled: Boolean): Boolean {
-        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+        return timed("setAirplaneMode") {
             when (preferencesRepository.getControlMethod()) {
                 ControlMethod.ROOT -> rootDataSource.setAirplaneMode(enabled)
                 ControlMethod.SHIZUKU -> shizukuDataSource.setAirplaneMode(enabled)
@@ -66,7 +72,7 @@ class ImsStateProvider @Inject constructor(
     }
 
     suspend fun stopEvents() {
-        withTimeoutOrNull(CALL_TIMEOUT_MS) {
+        timed("stopEvents") {
             when (preferencesRepository.getControlMethod()) {
                 ControlMethod.ROOT -> rootDataSource.stopImsEvents()
                 ControlMethod.SHIZUKU -> shizukuDataSource.stopImsEvents()
@@ -74,7 +80,33 @@ class ImsStateProvider @Inject constructor(
         }
     }
 
+    /**
+     * Runs [block] and waits at most [CALL_TIMEOUT_MS] for it. A binder call that blocks cannot
+     * be interrupted by cancelling its coroutine, so it runs on a scope of its own and is simply
+     * abandoned when the wait runs out: the caller carries on instead of hanging with it.
+     * Calls slower than [SLOW_CALL_MS] and timeouts go to the log.
+     */
+    private suspend fun <T> timed(name: String, block: suspend () -> T): T? {
+        val started = SystemClock.elapsedRealtime()
+        val job = callScope.async { block() }
+        val result = withTimeoutOrNull(CALL_TIMEOUT_MS) { job.await() }
+        val took = SystemClock.elapsedRealtime() - started
+        if (!job.isCompleted) {
+            AppLog.w("$name: no answer after $took ms, giving up waiting (the call is still running)")
+            job.invokeOnCompletion {
+                val total = SystemClock.elapsedRealtime() - started
+                AppLog.w("$name: the abandoned call finished after $total ms")
+            }
+        } else if (took >= SLOW_CALL_MS) {
+            AppLog.w("$name: slow call, $took ms")
+        }
+        return result
+    }
+
+    private val callScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private companion object {
         const val CALL_TIMEOUT_MS = 8_000L
+        const val SLOW_CALL_MS = 1_000L
     }
 }
