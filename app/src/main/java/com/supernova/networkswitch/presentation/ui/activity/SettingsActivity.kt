@@ -76,6 +76,8 @@ private fun SettingsScreen(
     val autoSwitchStatus by autoSwitchViewModel.status.collectAsState()
     val detectionMode by autoSwitchViewModel.detectionMode.collectAsState()
     val pollIntervalSec by autoSwitchViewModel.pollIntervalSec.collectAsState()
+    val probeEnabled by autoSwitchViewModel.probeEnabled.collectAsState()
+    val probeIntervalMin by autoSwitchViewModel.probeIntervalMin.collectAsState()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -121,6 +123,10 @@ private fun SettingsScreen(
                 pollIntervalSec = pollIntervalSec,
                 onDetectionModeChange = { autoSwitchViewModel.setDetectionMode(it) },
                 onPollIntervalChange = { autoSwitchViewModel.setPollIntervalSec(it) },
+                probeEnabled = probeEnabled,
+                probeIntervalMin = probeIntervalMin,
+                onProbeEnabledChange = { autoSwitchViewModel.setProbeEnabled(it) },
+                onProbeIntervalChange = { autoSwitchViewModel.setProbeIntervalMin(it) },
                 diagnostics = autoSwitchViewModel.diagnostics,
                 diagnosticsRunning = autoSwitchViewModel.diagnosticsRunning,
                 onEnabledChange = { enable ->
@@ -152,6 +158,10 @@ private fun AutoSwitchCard(
     pollIntervalSec: Int,
     onDetectionModeChange: (DetectionMode) -> Unit,
     onPollIntervalChange: (Int) -> Unit,
+    probeEnabled: Boolean,
+    probeIntervalMin: Int,
+    onProbeEnabledChange: (Boolean) -> Unit,
+    onProbeIntervalChange: (Int) -> Unit,
     diagnostics: String?,
     diagnosticsRunning: Boolean,
     onEnabledChange: (Boolean) -> Unit,
@@ -217,6 +227,41 @@ private fun AutoSwitchCard(
                     onValueChange = { sliderValue = it },
                     onValueChangeFinished = { onPollIntervalChange(sliderValue.toInt()) },
                     valueRange = AutoSwitchPreferences.MIN_POLL_SEC.toFloat()..AutoSwitchPreferences.MAX_POLL_SEC.toFloat()
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.probe_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.probe_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Switch(checked = probeEnabled, onCheckedChange = onProbeEnabledChange)
+            }
+            if (probeEnabled) {
+                var probeValue by remember(probeIntervalMin) { mutableFloatStateOf(probeIntervalMin.toFloat()) }
+                Text(
+                    text = stringResource(R.string.probe_every, probeValue.toInt()),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = probeValue,
+                    onValueChange = { probeValue = it },
+                    onValueChangeFinished = { onProbeIntervalChange(probeValue.toInt()) },
+                    valueRange = AutoSwitchPreferences.MIN_PROBE_MIN.toFloat()..AutoSwitchPreferences.MAX_PROBE_MIN.toFloat()
                 )
             }
 

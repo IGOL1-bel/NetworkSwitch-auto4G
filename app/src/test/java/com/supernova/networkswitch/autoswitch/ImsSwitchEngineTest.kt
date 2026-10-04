@@ -232,4 +232,62 @@ class ImsSwitchEngineTest {
         assertTrue(fake.writes.isEmpty())
         assertEquals(NO_SAVED_MODE, fake.saved)
     }
+
+    @Test
+    fun `a probe that finds VoLTE keeps 4G only and remembers the previous mode`() = runTest {
+        val gsmWcdmaLte = 9
+        val fake = Fake(mode = gsmWcdmaLte)
+        var looks = 0
+
+        val status = fake.engine().probe(
+            volteState = { if (++looks >= 3) SAMPLE_VOLTE else SAMPLE_NO_VOLTE },
+            attempts = 5,
+            pause = {},
+        )
+
+        assertEquals(ImsSwitchEngine.Code.SWITCHED, status?.code)
+        assertEquals(lteOnly, fake.mode)
+        assertEquals(gsmWcdmaLte, fake.saved)
+        assertEquals(3, looks)
+    }
+
+    @Test
+    fun `a probe that finds no VoLTE gives the previous mode back`() = runTest {
+        val gsmWcdmaLte = 9
+        val fake = Fake(mode = gsmWcdmaLte)
+
+        val status = fake.engine().probe(volteState = { SAMPLE_NO_VOLTE }, attempts = 3, pause = {})
+
+        assertEquals(ImsSwitchEngine.Code.PROBE_NO_VOLTE, status?.code)
+        assertEquals(gsmWcdmaLte, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+        assertEquals(listOf(lteOnly, gsmWcdmaLte), fake.writes)
+    }
+
+    @Test
+    fun `no probe while already switched, already on 4G only, or unreadable`() = runTest {
+        val active = Fake(mode = lteOnly, saved = nrLteGsmWcdma)
+        assertEquals(null, active.engine().probe({ SAMPLE_VOLTE }, 2, {}))
+
+        val onLte = Fake(mode = lteOnly)
+        assertEquals(null, onLte.engine().probe({ SAMPLE_VOLTE }, 2, {}))
+
+        val unreadable = Fake(mode = 26).apply { readable = false }
+        assertEquals(null, unreadable.engine().probe({ SAMPLE_VOLTE }, 2, {}))
+
+        assertTrue(active.writes.isEmpty() && onLte.writes.isEmpty() && unreadable.writes.isEmpty())
+    }
+
+    @Test
+    fun `a failed probe switch backs off`() = runTest {
+        val fake = Fake(mode = 9).apply { writeSucceeds = false }
+        val engine = fake.engine(cooldown = 2)
+
+        assertEquals(ImsSwitchEngine.Code.SWITCH_FAILED, engine.probe({ SAMPLE_NO_VOLTE }, 2, {})?.code)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+
+        assertEquals(null, engine.probe({ SAMPLE_NO_VOLTE }, 2, {})) // cooldown 2 -> 1
+        assertEquals(null, engine.probe({ SAMPLE_NO_VOLTE }, 2, {})) // cooldown 1 -> 0
+        assertEquals(1, fake.writes.size)
+    }
 }

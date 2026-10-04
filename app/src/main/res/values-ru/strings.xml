@@ -112,4 +112,10 @@
     <string name="mode_nr_lte_tdscdma_wcdma">3G/4G/5G (NR/LTE/TD-SCDMA/WCDMA)</string>
     <string name="mode_nr_lte_tdscdma_gsm_wcdma">2G/3G/4G/5G (NR/LTE/TD-SCDMA/GSM/WCDMA)</string>
     <string name="mode_nr_lte_tdscdma_cdma_evdo_gsm_wcdma">Глобальный 5G + TD-SCDMA (все сети)</string>
+
+    <string name="status_probing">VoLTE не виден — ненадолго включаю «Только 4G» для проверки</string>
+    <string name="status_probe_no_volte">Проба «Только 4G»: VoLTE здесь нет, вернул режим «%1$s»</string>
+    <string name="probe_title">Искать VoLTE на 3G/2G</string>
+    <string name="probe_desc">Телефон на 3G или 2G не может показать VoLTE. Время от времени приложение ненадолго включает «Только 4G» для проверки и возвращает режим, если VoLTE нет. Возможны короткие обрывы связи. Во время звонка проба не запускается.</string>
+    <string name="probe_every">Пробовать каждые %1$d мин</string>
 </resources>

@@ -1,5 +1,8 @@
 package com.supernova.networkswitch.autoswitch
 
+import kotlinx.coroutines.flow.first
+import android.os.SystemClock
+import android.media.AudioManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -76,6 +79,8 @@ class ImsAutoSwitchService : Service() {
 
     /** Set while the user picked polling; changes the status note. */
     private var pollingSeconds: Int? = null
+
+    private var lastProbeAt = SystemClock.elapsedRealtime()
 
     /**
      * Keeps the CPU up for the few seconds an event needs. Without it the phone can go back to
@@ -178,7 +183,9 @@ class ImsAutoSwitchService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "VoLTE check failed", e)
             }
-            val waitMs = if (listening) WATCHDOG_MS else FALLBACK_POLL_MS
+            // With probing on, a quiet spell must not outlast the probe interval: nothing else
+            // would wake the loop while the phone sits on 3G.
+            val waitMs = if (listening) watchdogMs() else FALLBACK_POLL_MS
             timedOut = withTimeoutOrNull(waitMs) {
                 events.receive()
                 false
@@ -219,6 +226,11 @@ class ImsAutoSwitchService : Service() {
      * itself queues one more event. That is harmless: registration only happens on a
      * watchdog timeout or when it was missing, never in reaction to an event.
      */
+    private suspend fun watchdogMs(): Long {
+        if (!autoSwitchPreferences.probeEnabled.first()) return WATCHDOG_MS
+        return minOf(WATCHDOG_MS, autoSwitchPreferences.probeIntervalMin.first() * 60_000L)
+    }
+
     private suspend fun register(subId: Int) {
         listening = imsStateProvider.startEvents(subId, imsListener)
         registeredSubId = if (listening) subId else null
@@ -253,7 +265,32 @@ class ImsAutoSwitchService : Service() {
                 engine.restoreIfActive()?.let { publish(describe(it)) }
             }
         }
-        publish(describe(engine.onSample(imsStateProvider.volteState(subId))))
+        val status = engine.onSample(imsStateProvider.volteState(subId))
+        publish(describe(status))
+        if (status.code == ImsSwitchEngine.Code.NO_VOLTE_IDLE) maybeProbe(subId)
+    }
+
+    /**
+     * A phone parked on 3G or 2G never registers IMS, so "no VoLTE" can simply mean "not on LTE".
+     * When the user allowed it, move to 4G only now and then to find out, and fall back at once
+     * if VoLTE is not there. Never during a call: the switch would cut it.
+     */
+    private suspend fun maybeProbe(subId: Int) {
+        if (!autoSwitchPreferences.probeEnabled.first()) return
+        val intervalMs = autoSwitchPreferences.probeIntervalMin.first() * 60_000L
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastProbeAt < intervalMs) return
+        if (getSystemService(AudioManager::class.java).mode != AudioManager.MODE_NORMAL) return
+        lastProbeAt = now
+
+        eventWakeLock.acquire(PROBE_WAKE_MS)
+        publish(getString(R.string.status_probing))
+        val result = engine.probe(
+            volteState = { imsStateProvider.volteState(subId) },
+            attempts = PROBE_ATTEMPTS,
+            pause = { delay(PROBE_STEP_MS) },
+        )
+        if (result != null) publish(describe(result))
     }
 
     /**
@@ -328,6 +365,7 @@ class ImsAutoSwitchService : Service() {
             ImsSwitchEngine.Code.VOLTE_DETECTED -> getString(R.string.status_volte_detected)
             ImsSwitchEngine.Code.LOST_RESTORING_SOON -> getString(R.string.status_lost_restoring, mode)
             ImsSwitchEngine.Code.NO_VOLTE_IDLE -> getString(R.string.status_no_volte)
+            ImsSwitchEngine.Code.PROBE_NO_VOLTE -> getString(R.string.status_probe_no_volte, mode)
         }
     }
 
@@ -411,6 +449,11 @@ class ImsAutoSwitchService : Service() {
 
         /** Waits before each read-back of a freshly written mode. */
         private val VERIFY_DELAYS_MS = longArrayOf(1_500L, 2_500L, 4_000L)
+
+        /** A probe looks for VoLTE this often, this many times: LTE attach plus IMS registration. */
+        private const val PROBE_STEP_MS = 3_000L
+        private const val PROBE_ATTEMPTS = 8
+        private const val PROBE_WAKE_MS = 60_000L
 
         private const val RESTORE_ATTEMPTS = 6
         private const val RESTORE_RETRY_MS = 10_000L

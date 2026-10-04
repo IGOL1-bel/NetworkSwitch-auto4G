@@ -40,6 +40,20 @@ class AutoSwitchViewModel @Inject constructor(
     val pollIntervalSec: StateFlow<Int> = autoSwitchPreferences.pollIntervalSec
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_POLL_SEC)
 
+    val probeEnabled: StateFlow<Boolean> = autoSwitchPreferences.probeEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val probeIntervalMin: StateFlow<Int> = autoSwitchPreferences.probeIntervalMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_PROBE_MIN)
+
+    fun setProbeEnabled(value: Boolean) {
+        viewModelScope.launch { autoSwitchPreferences.setProbeEnabled(value) }
+    }
+
+    fun setProbeIntervalMin(minutes: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setProbeIntervalMin(minutes) }
+    }
+
     fun setDetectionMode(mode: DetectionMode) {
         viewModelScope.launch { autoSwitchPreferences.setDetectionMode(mode) }
     }

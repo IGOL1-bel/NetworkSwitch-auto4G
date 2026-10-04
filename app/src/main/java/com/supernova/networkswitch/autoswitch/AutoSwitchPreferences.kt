@@ -46,6 +46,22 @@ class AutoSwitchPreferences @Inject constructor(
         dataStore.edit { it[POLL_INTERVAL_KEY] = seconds.coerceIn(MIN_POLL_SEC, MAX_POLL_SEC) }
     }
 
+    val probeEnabled: Flow<Boolean> = dataStore.data
+        .map { it[PROBE_ENABLED_KEY] ?: false }
+        .distinctUntilChanged()
+
+    val probeIntervalMin: Flow<Int> = dataStore.data
+        .map { (it[PROBE_INTERVAL_KEY] ?: DEFAULT_PROBE_MIN).coerceIn(MIN_PROBE_MIN, MAX_PROBE_MIN) }
+        .distinctUntilChanged()
+
+    suspend fun setProbeEnabled(value: Boolean) {
+        dataStore.edit { it[PROBE_ENABLED_KEY] = value }
+    }
+
+    suspend fun setProbeIntervalMin(minutes: Int) {
+        dataStore.edit { it[PROBE_INTERVAL_KEY] = minutes.coerceIn(MIN_PROBE_MIN, MAX_PROBE_MIN) }
+    }
+
     suspend fun isEnabled(): Boolean = enabled.first()
 
     suspend fun setEnabled(value: Boolean) {
@@ -77,9 +93,14 @@ class AutoSwitchPreferences @Inject constructor(
         const val MIN_POLL_SEC = 5
         const val MAX_POLL_SEC = 120
         const val DEFAULT_POLL_SEC = 10
+        const val MIN_PROBE_MIN = 1
+        const val MAX_PROBE_MIN = 60
+        const val DEFAULT_PROBE_MIN = 5
         private const val EVENTS_VALUE = "events"
         private const val POLLING_VALUE = "polling"
 
+        private val PROBE_ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_probe_enabled")
+        private val PROBE_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_probe_interval_min")
         private val MODE_KEY = stringPreferencesKey("volte_auto_switch_detection_mode")
         private val POLL_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_poll_interval_sec")
         private val ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_enabled")

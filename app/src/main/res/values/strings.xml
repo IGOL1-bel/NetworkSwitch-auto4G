@@ -118,4 +118,10 @@
     <string name="mode_nr_lte_tdscdma_wcdma">3G/4G/5G (NR/LTE/TD-SCDMA/WCDMA)</string>
     <string name="mode_nr_lte_tdscdma_gsm_wcdma">2G/3G/4G/5G (NR/LTE/TD-SCDMA/GSM/WCDMA)</string>
     <string name="mode_nr_lte_tdscdma_cdma_evdo_gsm_wcdma">Global 5G + TD-SCDMA (All Networks)</string>
+
+    <string name="status_probing">No VoLTE seen - trying 4G only for a moment to check</string>
+    <string name="status_probe_no_volte">Tried 4G only: no VoLTE here, back to %1$s</string>
+    <string name="probe_title">Look for VoLTE on 3G/2G</string>
+    <string name="probe_desc">A phone on 3G or 2G cannot show VoLTE. From time to time this briefly switches to 4G only to check, and goes back if there is no VoLTE. Short connection drops are possible. Never during a call.</string>
+    <string name="probe_every">Try every %1$d min</string>
 </resources>

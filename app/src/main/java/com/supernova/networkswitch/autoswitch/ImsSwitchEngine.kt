@@ -112,6 +112,55 @@ class ImsSwitchEngine(
         }
     }
 
+    /**
+     * Tries 4G only on purpose, to find out whether VoLTE exists here. A phone that sits on 3G
+     * or 2G has no IMS registration, so VoLTE can never show up by itself; moving it to LTE is
+     * the only way to see. Keeps 4G only if VoLTE appears within [attempts] looks (one [pause]
+     * apart), otherwise gives the previous mode back.
+     *
+     * @return what happened, or null when a probe makes no sense right now
+     */
+    suspend fun probe(
+        volteState: suspend () -> Int,
+        attempts: Int,
+        pause: suspend () -> Unit,
+    ): Status? {
+        if (loadSavedMode() != NO_SAVED_MODE) return null
+        if (cooldown > 0) {
+            cooldown--
+            return null
+        }
+        val current = readMode() ?: return null
+        if (current == LTE_ONLY) return null
+
+        val entered = withContext(NonCancellable) {
+            storeSavedMode(current)
+            if (writeMode(LTE_ONLY) || readMode() == LTE_ONLY) {
+                true
+            } else {
+                storeSavedMode(NO_SAVED_MODE)
+                cooldown = failureCooldown
+                false
+            }
+        }
+        if (!entered) return Status(Code.SWITCH_FAILED)
+
+        // From here the saved mode is persisted, so even if this is cancelled or the process
+        // dies, the normal "no VoLTE -> restore" path puts the phone back.
+        repeat(attempts) {
+            pause()
+            if (volteState() == SAMPLE_VOLTE) {
+                lastSample = SAMPLE_VOLTE
+                streak = confirmations
+                return Status(Code.SWITCHED, current)
+            }
+        }
+        val restored = restore(current)
+        lastSample = SAMPLE_UNKNOWN
+        streak = 0
+        return if (restored.code == Code.RESTORED) Status(Code.PROBE_NO_VOLTE, current) else restored
+    }
+
     private fun idleStatus(sample: Int, saved: Int): Status {
         val active = saved != NO_SAVED_MODE
         return when {
@@ -139,6 +188,7 @@ class ImsSwitchEngine(
         VOLTE_DETECTED,
         LOST_RESTORING_SOON,
         NO_VOLTE_IDLE,
+        PROBE_NO_VOLTE,
     }
 
     companion object {
