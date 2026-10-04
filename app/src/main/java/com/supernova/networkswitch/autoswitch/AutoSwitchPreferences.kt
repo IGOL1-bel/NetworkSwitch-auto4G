@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.autoswitch
 
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -68,6 +69,15 @@ class AutoSwitchPreferences @Inject constructor(
         dataStore.edit { it[ENABLED_KEY] = value }
     }
 
+    /** Wall-clock time of the last VoLTE check, 0 before the first one. Tells a sleeping service from an idle one. */
+    val lastCheck: Flow<Long> = dataStore.data
+        .map { it[LAST_CHECK_KEY] ?: 0L }
+        .distinctUntilChanged()
+
+    suspend fun setLastCheck(millis: Long) {
+        dataStore.edit { it[LAST_CHECK_KEY] = millis }
+    }
+
     suspend fun setStatus(value: String) {
         dataStore.edit { it[STATUS_KEY] = value }
     }
@@ -101,6 +111,7 @@ class AutoSwitchPreferences @Inject constructor(
 
         private val PROBE_ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_probe_enabled")
         private val PROBE_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_probe_interval_min")
+        private val LAST_CHECK_KEY = longPreferencesKey("volte_auto_switch_last_check")
         private val MODE_KEY = stringPreferencesKey("volte_auto_switch_detection_mode")
         private val POLL_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_poll_interval_sec")
         private val ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_enabled")

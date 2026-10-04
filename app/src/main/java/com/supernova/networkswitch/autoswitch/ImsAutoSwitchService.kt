@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.autoswitch
 
+import android.app.AlarmManager
 import kotlinx.coroutines.flow.first
 import android.os.SystemClock
 import android.media.AudioManager
@@ -82,6 +83,19 @@ class ImsAutoSwitchService : Service() {
 
     private var lastProbeAt = SystemClock.elapsedRealtime()
 
+    private var lastCheckShownAt = 0L
+
+    private val alarmManager by lazy { getSystemService(AlarmManager::class.java) }
+
+    private val heartbeatIntent by lazy {
+        PendingIntent.getForegroundService(
+            this,
+            HEARTBEAT_REQUEST_CODE,
+            Intent(this, ImsAutoSwitchService::class.java).setAction(ACTION_HEARTBEAT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     /**
      * Keeps the CPU up for the few seconds an event needs. Without it the phone can go back to
      * sleep right after the event woke it, and the second sample (a coroutine timer) only
@@ -132,6 +146,11 @@ class ImsAutoSwitchService : Service() {
         if (!watching) {
             watching = true
             scope.launch { observeEnabled() }
+        } else if (intent?.action == ACTION_HEARTBEAT) {
+            // The alarm woke the process: run a check now instead of waiting for a timer that
+            // may have been stuck while the phone slept.
+            eventWakeLock.acquire(EVENT_WAKE_MS)
+            events.trySend(Unit)
         }
         return START_STICKY
     }
@@ -185,6 +204,7 @@ class ImsAutoSwitchService : Service() {
             }
             // With probing on, a quiet spell must not outlast the probe interval: nothing else
             // would wake the loop while the phone sits on 3G.
+            scheduleHeartbeat()
             val waitMs = if (listening) watchdogMs() else FALLBACK_POLL_MS
             timedOut = withTimeoutOrNull(waitMs) {
                 events.receive()
@@ -214,7 +234,9 @@ class ImsAutoSwitchService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "VoLTE check failed", e)
                 }
-                delay(intervalSec * 1_000L)
+                scheduleHeartbeat()
+                // Wakes early on the alarm; otherwise the plain interval.
+                withTimeoutOrNull(intervalSec * 1_000L) { events.receive() }
             }
         } finally {
             if (pollWakeLock.isHeld) pollWakeLock.release()
@@ -226,6 +248,23 @@ class ImsAutoSwitchService : Service() {
      * itself queues one more event. That is harmless: registration only happens on a
      * watchdog timeout or when it was missing, never in reaction to an event.
      */
+    /**
+     * Safety net against the phone (or the OEM's power manager) letting the app sleep: an alarm
+     * that may fire in Doze wakes the service and forces a check. Inexact on purpose, since exact
+     * alarms need a permission the user would have to grant; Doze spaces them out to ~9 minutes.
+     */
+    private fun scheduleHeartbeat() {
+        try {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + HEARTBEAT_MS,
+                heartbeatIntent,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not schedule the heartbeat alarm", e)
+        }
+    }
+
     private suspend fun watchdogMs(): Long {
         if (!autoSwitchPreferences.probeEnabled.first()) return WATCHDOG_MS
         return minOf(WATCHDOG_MS, autoSwitchPreferences.probeIntervalMin.first() * 60_000L)
@@ -314,6 +353,8 @@ class ImsAutoSwitchService : Service() {
             Log.e(TAG, "Restoring the previous mode failed", e)
         }
         autoSwitchPreferences.setStatus("")
+        autoSwitchPreferences.setLastCheck(0L)
+        runCatching { alarmManager.cancel(heartbeatIntent) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -376,11 +417,17 @@ class ImsAutoSwitchService : Service() {
             listening -> engineStatus
             else -> getString(R.string.status_events_unavailable, engineStatus)
         }
-        if (status == lastStatus) return
+        val now = System.currentTimeMillis()
+        val changed = status != lastStatus
+        // Even an unchanged status refreshes the time now and then, so a stale notification
+        // can only mean the service is not running its checks.
+        if (!changed && now - lastCheckShownAt < LAST_CHECK_UPDATE_MS) return
         lastStatus = status
-        autoSwitchPreferences.setStatus(status)
+        lastCheckShownAt = now
+        if (changed) autoSwitchPreferences.setStatus(status)
+        autoSwitchPreferences.setLastCheck(now)
         getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(status))
+            .notify(NOTIFICATION_ID, buildNotification(status, now))
     }
 
     private fun promoteToForeground(): Boolean {
@@ -412,7 +459,7 @@ class ImsAutoSwitchService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(text: String, whenMs: Long = System.currentTimeMillis()): Notification {
         val openApp = PendingIntent.getActivity(
             this,
             0,
@@ -424,6 +471,8 @@ class ImsAutoSwitchService : Service() {
             .setContentTitle(getString(R.string.auto_switch_title))
             .setContentText(text)
             .setContentIntent(openApp)
+            .setWhen(whenMs)
+            .setShowWhen(true)
             .setOngoing(true)
             .build()
     }
@@ -454,6 +503,13 @@ class ImsAutoSwitchService : Service() {
         private const val PROBE_STEP_MS = 3_000L
         private const val PROBE_ATTEMPTS = 8
         private const val PROBE_WAKE_MS = 60_000L
+
+        private const val ACTION_HEARTBEAT = "com.supernova.networkswitch.HEARTBEAT"
+        private const val HEARTBEAT_REQUEST_CODE = 7
+        private const val HEARTBEAT_MS = 3 * 60_000L
+
+        /** Refresh interval of the "last check" time when nothing else changed. */
+        private const val LAST_CHECK_UPDATE_MS = 30_000L
 
         private const val RESTORE_ATTEMPTS = 6
         private const val RESTORE_RETRY_MS = 10_000L

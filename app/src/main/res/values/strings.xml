@@ -124,4 +124,5 @@
     <string name="probe_title">Look for VoLTE on 3G/2G</string>
     <string name="probe_desc">A phone on 3G or 2G cannot show VoLTE. From time to time this briefly switches to 4G only to check, and goes back if there is no VoLTE. Short connection drops are possible. Never during a call.</string>
     <string name="probe_every">Try every %1$d min</string>
+    <string name="last_check">Last check: %1$s</string>
 </resources>

@@ -77,6 +77,7 @@ private fun SettingsScreen(
     val detectionMode by autoSwitchViewModel.detectionMode.collectAsState()
     val pollIntervalSec by autoSwitchViewModel.pollIntervalSec.collectAsState()
     val probeEnabled by autoSwitchViewModel.probeEnabled.collectAsState()
+    val lastCheck by autoSwitchViewModel.lastCheck.collectAsState()
     val probeIntervalMin by autoSwitchViewModel.probeIntervalMin.collectAsState()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
@@ -119,6 +120,7 @@ private fun SettingsScreen(
             AutoSwitchCard(
                 enabled = autoSwitchEnabled,
                 status = autoSwitchStatus,
+                lastCheck = lastCheck,
                 detectionMode = detectionMode,
                 pollIntervalSec = pollIntervalSec,
                 onDetectionModeChange = { autoSwitchViewModel.setDetectionMode(it) },
@@ -154,6 +156,7 @@ private fun SettingsScreen(
 private fun AutoSwitchCard(
     enabled: Boolean,
     status: String,
+    lastCheck: Long,
     detectionMode: DetectionMode,
     pollIntervalSec: Int,
     onDetectionModeChange: (DetectionMode) -> Unit,
@@ -290,6 +293,17 @@ private fun AutoSwitchCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
+                if (lastCheck > 0L) {
+                    Text(
+                        text = stringResource(
+                            R.string.last_check,
+                            java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM)
+                                .format(java.util.Date(lastCheck))
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
