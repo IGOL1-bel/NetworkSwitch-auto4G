@@ -338,13 +338,27 @@ class ImsAutoSwitchService : Service() {
             if (index > 0) delay(SETTLE_MS)
             sampleOnce()
         }
+        // A change seen only once is not acted on, and nothing else would look again for up to
+        // the watchdog interval (longer while the CPU sleeps). Keep sampling shortly instead.
+        var extra = 0
+        while (lastCode in PENDING_CODES && extra < PENDING_EXTRA_SAMPLES) {
+            extra++
+            AppLog.i("change not confirmed yet, sampling again (extra $extra)")
+            eventWakeLock.acquire(EVENT_WAKE_MS)
+            delay(SETTLE_MS)
+            sampleOnce()
+        }
     }
+
+    /** Engine outcome of the latest [sampleOnce], null when it did not reach the engine. */
+    private var lastCode: ImsSwitchEngine.Code? = null
 
     /**
      * One engine step. Skips when there is no data SIM, and gives a mode back at once if the
      * default data SIM moved away from the one that was switched.
      */
     private suspend fun sampleOnce() {
+        lastCode = null
         val subId = currentSubId()
         if (subId < 0) {
             publish(getString(R.string.status_no_data_sim))
@@ -367,6 +381,7 @@ class ImsAutoSwitchService : Service() {
         }
         val sample = imsStateProvider.volteState(subId)
         val status = engine.onSample(sample)
+        lastCode = status.code
         logSample(subId, sample, status)
         publish(describe(status))
         if (status.code == ImsSwitchEngine.Code.NO_VOLTE_IDLE) maybeProbe(subId)
@@ -692,6 +707,14 @@ class ImsAutoSwitchService : Service() {
 
         /** Gap between the two samples taken after an event; also lets capabilities catch up. */
         private const val SETTLE_MS = 4_000L
+
+        /** Outcomes that mean "seen once, waiting for a second identical sample". */
+        private val PENDING_CODES = setOf(
+            ImsSwitchEngine.Code.VOLTE_DETECTED,
+            ImsSwitchEngine.Code.LOST_RESTORING_SOON,
+            ImsSwitchEngine.Code.WAITING_TO_RETRY,
+        )
+        private const val PENDING_EXTRA_SAMPLES = 3
 
         /** Longest quiet spell before the callbacks are re-registered as a precaution. */
         private const val WATCHDOG_MS = 120_000L
