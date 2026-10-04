@@ -58,6 +58,9 @@ class ShizukuControllerService() : IShizukuController.Stub() {
         imsWatcher.stop()
     }
 
+    override fun setAirplaneMode(enabled: Boolean): Boolean =
+        ShellCommands.setAirplaneMode(enabled, CALLER)
+
     override fun destroy() {
         imsWatcher.stop()
         Log.d(TAG, "ShizukuControllerService: destroy")

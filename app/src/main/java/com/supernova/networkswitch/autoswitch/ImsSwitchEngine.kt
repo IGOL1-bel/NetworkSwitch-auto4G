@@ -94,7 +94,18 @@ class ImsSwitchEngine(
     private suspend fun enterLteOnly(): Status = withContext(NonCancellable) {
         val current = readMode()
             ?: return@withContext Status(Code.CANNOT_READ_MODE)
-        if (current == LTE_ONLY) return@withContext Status(Code.ALREADY_LTE_ONLY)
+        if (current == LTE_ONLY) {
+            // Already on 4G only, e.g. set by hand. With a default mode chosen, adopt it as if the
+            // engine had switched: when VoLTE goes away the phone then moves to that default
+            // instead of staying on 4G only with no network. Without a default there is nothing
+            // known to return to, so leave it alone.
+            val fallback = restoreTarget(NO_SAVED_MODE)
+            if (fallback != NO_SAVED_MODE && fallback != LTE_ONLY) {
+                storeSavedMode(fallback)
+                return@withContext Status(Code.ADOPTED, fallback)
+            }
+            return@withContext Status(Code.ALREADY_LTE_ONLY)
+        }
 
         storeSavedMode(current)
         if (writeMode(LTE_ONLY) || readMode() == LTE_ONLY) {
@@ -204,6 +215,7 @@ class ImsSwitchEngine(
         LOST_RESTORING_SOON,
         NO_VOLTE_IDLE,
         PROBE_NO_VOLTE,
+        ADOPTED,
     }
 
     companion object {

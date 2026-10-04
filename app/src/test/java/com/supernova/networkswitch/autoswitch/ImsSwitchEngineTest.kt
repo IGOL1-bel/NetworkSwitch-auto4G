@@ -333,4 +333,23 @@ class ImsSwitchEngineTest {
 
         assertTrue(fake.writes.isEmpty())
     }
+
+    @Test
+    fun `a 4G only set by hand is adopted when a default mode is chosen`() = runTest {
+        val gsmWcdmaLte = 9
+        val fake = Fake(mode = lteOnly).apply { restoreTo = gsmWcdmaLte }
+        val engine = fake.engine()
+
+        engine.onSample(SAMPLE_VOLTE)
+        val adopted = engine.onSample(SAMPLE_VOLTE)
+        assertEquals(ImsSwitchEngine.Code.ADOPTED, adopted.code)
+        assertEquals(gsmWcdmaLte, fake.saved)
+        assertTrue(fake.writes.isEmpty())
+
+        engine.onSample(SAMPLE_NO_VOLTE)
+        engine.onSample(SAMPLE_NO_VOLTE)
+
+        assertEquals(gsmWcdmaLte, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+    }
 }

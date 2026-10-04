@@ -1,5 +1,7 @@
 package com.supernova.networkswitch.autoswitch
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.NonCancellable
 import android.graphics.drawable.Icon
 import android.app.AlarmManager
 import kotlinx.coroutines.flow.first
@@ -94,6 +96,9 @@ class ImsAutoSwitchService : Service() {
      * After a button press the auto-switch keeps its hands off until the VoLTE state differs
      * from what it was then: otherwise it would undo the choice within seconds.
      */
+    @Volatile
+    private var radioResetting = false
+
     private var holdSample: Int? = null
     private var manualMode = -1
 
@@ -158,6 +163,9 @@ class ImsAutoSwitchService : Service() {
         if (!promoteToForeground()) {
             stopSelf()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_RESET_RADIO) {
+            scope.launch { resetRadio() }
         }
         if (intent?.action == ACTION_SET_MODE) {
             val mode = intent.getIntExtra(EXTRA_MODE, -1)
@@ -439,6 +447,7 @@ class ImsAutoSwitchService : Service() {
                 getString(R.string.status_lost_restoring, if (chosen == AutoSwitchPreferences.RESTORE_PREVIOUS) mode else modeName(chosen))
             }
             ImsSwitchEngine.Code.NO_VOLTE_IDLE -> getString(R.string.status_no_volte)
+            ImsSwitchEngine.Code.ADOPTED -> getString(R.string.status_adopted, mode)
             ImsSwitchEngine.Code.PROBE_NO_VOLTE -> getString(R.string.status_probe_no_volte, mode)
         }
     }
@@ -508,6 +517,44 @@ class ImsAutoSwitchService : Service() {
         ).build()
     }
 
+    private fun resetRadioAction(): Notification.Action {
+        val pending = PendingIntent.getService(
+            this,
+            ACTION_REQUEST_BASE,
+            Intent(this, ImsAutoSwitchService::class.java).setAction(ACTION_RESET_RADIO),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(
+            Icon.createWithResource(this, R.drawable.ic_5g_big),
+            getString(R.string.action_reset_radio),
+            pending,
+        ).build()
+    }
+
+    /**
+     * Airplane mode for a few seconds. After 4G vanishes under a 4G-only setting the modem can
+     * sit without registering for minutes, and switching modes does not help; a radio power
+     * cycle does. Airplane mode is always turned off again, even if this is cancelled.
+     */
+    private suspend fun resetRadio() {
+        if (radioResetting) return
+        radioResetting = true
+        var enabled = false
+        try {
+            eventWakeLock.acquire(RADIO_RESET_WAKE_MS)
+            publish(getString(R.string.status_radio_resetting))
+            enabled = imsStateProvider.setAirplaneMode(true)
+            if (enabled) delay(RADIO_RESET_MS)
+        } finally {
+            withContext(NonCancellable) {
+                // Also when the "enable" call looked like a failure: turning it off is harmless.
+                imsStateProvider.setAirplaneMode(false)
+                radioResetting = false
+            }
+        }
+        publish(getString(if (enabled) R.string.status_radio_reset_done else R.string.status_radio_reset_failed))
+    }
+
     private suspend fun observeActionModes() {
         combine(autoSwitchPreferences.actionModeA, autoSwitchPreferences.actionModeB) { a, b -> a to b }
             .distinctUntilChanged()
@@ -572,6 +619,7 @@ class ImsAutoSwitchService : Service() {
             .setOngoing(true)
             .addAction(modeAction(actionModes.first, 1))
             .addAction(modeAction(actionModes.second, 2))
+            .addAction(resetRadioAction())
             .build()
     }
 
@@ -604,6 +652,9 @@ class ImsAutoSwitchService : Service() {
 
         private const val ACTION_SET_MODE = "com.supernova.networkswitch.SET_MODE"
         private const val EXTRA_MODE = "mode"
+        private const val ACTION_RESET_RADIO = "com.supernova.networkswitch.RESET_RADIO"
+        private const val RADIO_RESET_MS = 10_000L
+        private const val RADIO_RESET_WAKE_MS = 40_000L
         private const val ACTION_REQUEST_BASE = 100
         private const val ACTION_HEARTBEAT = "com.supernova.networkswitch.HEARTBEAT"
         private const val HEARTBEAT_REQUEST_CODE = 7

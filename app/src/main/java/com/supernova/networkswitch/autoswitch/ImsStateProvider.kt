@@ -55,6 +55,16 @@ class ImsStateProvider @Inject constructor(
         } ?: false
     }
 
+    /** @return false when the command failed or the privileged process could not be reached */
+    suspend fun setAirplaneMode(enabled: Boolean): Boolean {
+        return withTimeoutOrNull(CALL_TIMEOUT_MS) {
+            when (preferencesRepository.getControlMethod()) {
+                ControlMethod.ROOT -> rootDataSource.setAirplaneMode(enabled)
+                ControlMethod.SHIZUKU -> shizukuDataSource.setAirplaneMode(enabled)
+            }
+        } ?: false
+    }
+
     suspend fun stopEvents() {
         withTimeoutOrNull(CALL_TIMEOUT_MS) {
             when (preferencesRepository.getControlMethod()) {

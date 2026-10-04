@@ -21,4 +21,7 @@ interface IRootController {
     boolean startImsEvents(int subId, IImsEventListener listener);
 
     void stopImsEvents();
+
+    /** Turns airplane mode on or off; false when the command failed. */
+    boolean setAirplaneMode(boolean enabled);
 }

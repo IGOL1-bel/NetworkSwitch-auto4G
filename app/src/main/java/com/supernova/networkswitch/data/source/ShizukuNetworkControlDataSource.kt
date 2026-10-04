@@ -107,6 +107,14 @@ class  ShizukuNetworkControlDataSource @Inject constructor(
         }
     }
 
+    suspend fun setAirplaneMode(enabled: Boolean): Boolean {
+        return try {
+            if (ensureServiceBinding()) userService?.setAirplaneMode(enabled) ?: false else false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun getImsDiagnostics(subId: Int): String {
         return try {
             if (ensureServiceBinding()) {

@@ -133,4 +133,9 @@
     <string name="notification_button_2">Button 2</string>
     <string name="status_manual_hold">Set by hand: %1$s - auto-switch paused until VoLTE changes</string>
     <string name="status_manual_failed">Could not set %1$s</string>
+    <string name="action_reset_radio">Reset radio</string>
+    <string name="status_radio_resetting">Resetting the radio: airplane mode for a few seconds...</string>
+    <string name="status_radio_reset_done">Radio reset done, the network should return shortly</string>
+    <string name="status_radio_reset_failed">Could not toggle airplane mode through the control method</string>
+    <string name="status_adopted">VoLTE on, already 4G only; when it is gone, switching to %1$s</string>
 </resources>

@@ -127,4 +127,9 @@
     <string name="notification_button_2">Кнопка 2</string>
     <string name="status_manual_hold">Выбрано вручную: %1$s — автопереключение приостановлено до смены VoLTE</string>
     <string name="status_manual_failed">Не удалось включить режим «%1$s»</string>
+    <string name="action_reset_radio">Сбросить радио</string>
+    <string name="status_radio_resetting">Сбрасываю радио: режим полёта на несколько секунд...</string>
+    <string name="status_radio_reset_done">Радио сброшено, сеть должна скоро вернуться</string>
+    <string name="status_radio_reset_failed">Не удалось переключить режим полёта выбранным способом управления</string>
+    <string name="status_adopted">VoLTE есть, уже «Только 4G»; когда пропадёт, включу «%1$s»</string>
 </resources>

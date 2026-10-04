@@ -59,6 +59,14 @@ class RootNetworkControlDataSource @Inject constructor(
         }
     }
 
+    suspend fun setAirplaneMode(enabled: Boolean): Boolean {
+        return try {
+            getNetworkController()?.setAirplaneMode(enabled) ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     suspend fun getImsDiagnostics(subId: Int): String {
         return try {
             getNetworkController()?.getImsDiagnostics(subId) ?: "Root service returned nothing"

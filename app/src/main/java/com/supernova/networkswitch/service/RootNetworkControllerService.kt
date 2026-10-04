@@ -45,6 +45,9 @@ class RootNetworkControllerService : RootService() {
         override fun stopImsEvents() {
             imsWatcher.stop()
         }
+
+        override fun setAirplaneMode(enabled: Boolean): Boolean =
+            ShellCommands.setAirplaneMode(enabled, CALLER)
     }
 
     private companion object {
