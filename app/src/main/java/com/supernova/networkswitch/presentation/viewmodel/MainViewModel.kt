@@ -156,6 +156,9 @@ class MainViewModel @Inject constructor(
     /**
      * Get display text for current network mode and next toggle mode
      */
+    /** The mode a toggle would switch to, for the screen to word. */
+    fun getNextMode(): NetworkMode = toggleModeConfig.getNextMode()
+
     fun getToggleButtonText(): String {
         val nextMode = toggleModeConfig.getNextMode()
         return "Switch to ${nextMode.displayName}"

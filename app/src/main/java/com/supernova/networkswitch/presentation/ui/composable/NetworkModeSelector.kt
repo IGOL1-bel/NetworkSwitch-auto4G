@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.presentation.ui.composable
 
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -39,7 +40,7 @@ fun NetworkModeSelector(
                 onExpandedChange = { expanded = !expanded }
             ) {
                 OutlinedTextField(
-                    value = selectedMode.displayName,
+                    value = stringResource(selectedMode.labelRes),
                     onValueChange = { },
                     readOnly = true,
                     trailingIcon = {
@@ -60,7 +61,7 @@ fun NetworkModeSelector(
                             text = {
                                 Column {
                                     Text(
-                                        text = mode.displayName,
+                                        text = stringResource(mode.labelRes),
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Medium
                                     )

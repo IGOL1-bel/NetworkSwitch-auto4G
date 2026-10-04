@@ -1,5 +1,7 @@
 package com.supernova.networkswitch.presentation.ui.composable
 
+import com.supernova.networkswitch.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -38,7 +40,7 @@ fun CompatibilityCard(
                     CircularProgressIndicator(modifier = Modifier.size(48.dp))
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Checking compatibility...",
+                        text = stringResource(R.string.checking_compat),
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center
                     )
@@ -53,13 +55,13 @@ fun CompatibilityCard(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Device Compatible",
+                        text = stringResource(R.string.device_compatible),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = "Using ${currentControlMethod.displayName()} method",
+                        text = stringResource(R.string.using_method, currentControlMethod.displayName()),
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.primary,
@@ -76,21 +78,21 @@ fun CompatibilityCard(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "${compatibilityState.method.displayName()} Access Denied",
+                        text = stringResource(R.string.access_denied, compatibilityState.method.displayName()),
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center
                     )
                     Text(
                         text = if (compatibilityState.method == ControlMethod.ROOT) 
-                            "Please grant root access to use this app" 
+                            stringResource(R.string.grant_root)
                         else 
-                            "Please grant Shizuku permission or install Shizuku",
+                            stringResource(R.string.grant_shizuku),
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = onRetryClick) { Text("Retry") }
+                    Button(onClick = onRetryClick) { Text(stringResource(R.string.retry)) }
                 }
                 
                 is CompatibilityState.Incompatible -> {
@@ -102,7 +104,7 @@ fun CompatibilityCard(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Device Not Compatible",
+                        text = stringResource(R.string.device_not_compatible),
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center
                     )
@@ -113,7 +115,7 @@ fun CompatibilityCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(16.dp))
-                    Button(onClick = onRetryClick) { Text("Retry") }
+                    Button(onClick = onRetryClick) { Text(stringResource(R.string.retry)) }
                 }
             }
         }
@@ -129,13 +131,13 @@ fun NetworkToggleCard(
     modifier: Modifier = Modifier
 ) {
     CardSection(
-        title = "Network Mode",
+        title = stringResource(R.string.network_mode),
         modifier = modifier
     ) {
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(
-            text = if (currentMode != null) "Current: ${currentMode.displayName}" else "Network mode unavailable",
+            text = if (currentMode != null) stringResource(R.string.current_mode, stringResource(currentMode.labelRes)) else stringResource(R.string.mode_unavailable),
             style = MaterialTheme.typography.titleMedium,
             color = if (currentMode != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -144,9 +146,9 @@ fun NetworkToggleCard(
         
         Text(
             text = if (currentMode != null) {
-                "Tap to switch to the configured alternate network mode"
+                stringResource(R.string.tap_to_switch)
             } else {
-                "Unable to detect current network mode"
+                stringResource(R.string.cannot_detect_mode)
             },
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
@@ -186,7 +188,7 @@ fun QuickSettingsHintCard(modifier: Modifier = Modifier) {
                 .padding(16.dp)
         ) {
             Text(
-                text = "💡 Pro Tip",
+                text = stringResource(R.string.pro_tip),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -194,7 +196,7 @@ fun QuickSettingsHintCard(modifier: Modifier = Modifier) {
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Add the \"Network Switch Toggle\" tile to your Quick Settings for instant network switching. Pull down your notification panel, tap the pencil icon, and add the tile.",
+                text = stringResource(R.string.pro_tip_text),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

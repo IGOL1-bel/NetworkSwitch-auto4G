@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.service
 
+import com.supernova.networkswitch.domain.model.label
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.telephony.SubscriptionManager
@@ -114,10 +115,10 @@ class NetworkTileService : TileService() {
 
             if (config != null) {
                 tile.state = Tile.STATE_ACTIVE
-                tile.label = (currentNetworkMode ?: config.getCurrentMode()).displayName
+                tile.label = (currentNetworkMode ?: config.getCurrentMode()).label(this)
                 tile.subtitle = getString(
                     R.string.tile_next_mode,
-                    config.getNextMode().displayName,
+                    config.getNextMode().label(this),
                 )
             } else {
                 tile.state = Tile.STATE_INACTIVE
