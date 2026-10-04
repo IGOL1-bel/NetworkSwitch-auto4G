@@ -60,9 +60,18 @@ class AutoSwitchPreferences @Inject constructor(
     suspend fun savedMode(): Int =
         dataStore.data.map { it[SAVED_MODE_KEY] ?: ImsSwitchEngine.NO_SAVED_MODE }.first()
 
-    suspend fun setSavedMode(mode: Int) {
-        dataStore.edit { it[SAVED_MODE_KEY] = mode }
+    /** [subId] is the subscription the mode belongs to, so a later default-data change cannot misdirect the restore. */
+    suspend fun setSavedMode(mode: Int, subId: Int) {
+        dataStore.edit {
+            it[SAVED_MODE_KEY] = mode
+            it[SAVED_SUB_ID_KEY] = subId
+        }
     }
+
+    /** Subscription the saved mode was taken from, or -1 when unknown. */
+    suspend fun savedSubId(): Int = dataStore.data.map { it[SAVED_SUB_ID_KEY] ?: -1 }.first()
+
+    suspend fun hasSavedMode(): Boolean = savedMode() != ImsSwitchEngine.NO_SAVED_MODE
 
     companion object {
         const val MIN_POLL_SEC = 5
@@ -75,6 +84,7 @@ class AutoSwitchPreferences @Inject constructor(
         private val POLL_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_poll_interval_sec")
         private val ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_enabled")
         private val STATUS_KEY = stringPreferencesKey("volte_auto_switch_status")
+        private val SAVED_SUB_ID_KEY = intPreferencesKey("volte_auto_switch_saved_sub_id")
         private val SAVED_MODE_KEY = intPreferencesKey("volte_auto_switch_saved_mode")
     }
 }

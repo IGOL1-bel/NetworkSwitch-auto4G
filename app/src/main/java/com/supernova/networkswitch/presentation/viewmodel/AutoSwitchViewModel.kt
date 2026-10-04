@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.presentation.viewmodel
 
+import com.supernova.networkswitch.R
 import android.content.Context
 import android.telephony.SubscriptionManager
 import androidx.compose.runtime.getValue
@@ -56,8 +57,18 @@ class AutoSwitchViewModel @Inject constructor(
     fun setEnabled(value: Boolean) {
         viewModelScope.launch {
             autoSwitchPreferences.setEnabled(value)
-            // Turning it off needs no call: the running service watches the flag itself.
-            if (value) ImsAutoSwitchService.start(context)
+            // Turning it off is handled by the running service, which restores the previous mode.
+            // If the service was killed meanwhile, start it so it can still give the mode back.
+            if (value || autoSwitchPreferences.hasSavedMode()) ImsAutoSwitchService.start(context)
+        }
+    }
+
+    /** Called when the app opens: brings the service back if the system or the user killed it. */
+    fun ensureRunning() {
+        viewModelScope.launch {
+            if (autoSwitchPreferences.isEnabled() || autoSwitchPreferences.hasSavedMode()) {
+                ImsAutoSwitchService.start(context)
+            }
         }
     }
 
@@ -68,7 +79,7 @@ class AutoSwitchViewModel @Inject constructor(
             diagnostics = try {
                 imsStateProvider.diagnostics(SubscriptionManager.getDefaultDataSubscriptionId())
             } catch (e: Exception) {
-                "Diagnostics failed: ${e.message}"
+                context.getString(R.string.diag_failed, e.message)
             }
             diagnosticsRunning = false
         }

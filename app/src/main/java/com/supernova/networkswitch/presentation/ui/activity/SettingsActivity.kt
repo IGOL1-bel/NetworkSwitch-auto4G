@@ -1,5 +1,7 @@
 package com.supernova.networkswitch.presentation.ui.activity
 
+import com.supernova.networkswitch.R
+import androidx.compose.ui.res.stringResource
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -82,12 +84,12 @@ private fun SettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Settings") },
+                title = { Text(stringResource(R.string.settings_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBackClick) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.back)
                         )
                     }
                 }
@@ -169,7 +171,7 @@ private fun AutoSwitchCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "4G only while VoLTE is available",
+                    text = stringResource(R.string.auto_switch_card_title),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.weight(1f)
@@ -181,33 +183,33 @@ private fun AutoSwitchCard(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Switches to 4G only once VoLTE registers and gives the previous network mode back when VoLTE is gone. Needs the control method above to work. For reliable background operation, exclude this app from battery optimization.",
+                text = stringResource(R.string.auto_switch_card_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "How to detect VoLTE",
+                text = stringResource(R.string.detect_how),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Medium
             )
             DetectionModeOption(
                 selected = detectionMode == DetectionMode.EVENTS,
-                title = "IMS events",
-                description = "Reacts when IMS registration changes. Lowest battery use.",
+                title = stringResource(R.string.detect_events_title),
+                description = stringResource(R.string.detect_events_desc),
                 onClick = { onDetectionModeChange(DetectionMode.EVENTS) }
             )
             DetectionModeOption(
                 selected = detectionMode == DetectionMode.POLLING,
-                title = "Periodic polling",
-                description = "Asks for the VoLTE state at a fixed interval. Keeps the CPU awake, so it uses more battery.",
+                title = stringResource(R.string.detect_polling_title),
+                description = stringResource(R.string.detect_polling_desc),
                 onClick = { onDetectionModeChange(DetectionMode.POLLING) }
             )
             if (detectionMode == DetectionMode.POLLING) {
                 var sliderValue by remember(pollIntervalSec) { mutableFloatStateOf(pollIntervalSec.toFloat()) }
                 Text(
-                    text = "Check every ${sliderValue.toInt()} s",
+                    text = stringResource(R.string.poll_every, sliderValue.toInt()),
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Slider(
@@ -232,7 +234,7 @@ private fun AutoSwitchCard(
                         )
                     }
                 ) {
-                    Text("Exclude from battery optimization")
+                    Text(stringResource(R.string.battery_exclude))
                 }
             }
 
@@ -251,7 +253,7 @@ private fun AutoSwitchCard(
                 onClick = onDiagnosticsClick,
                 enabled = !diagnosticsRunning
             ) {
-                Text(if (diagnosticsRunning) "Checking..." else "Check VoLTE detection")
+                Text(stringResource(if (diagnosticsRunning) R.string.diag_checking else R.string.diag_check))
             }
 
             if (diagnostics != null) {
@@ -317,7 +319,7 @@ private fun ControlMethodCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Control Method",
+                    text = stringResource(R.string.control_method),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -325,7 +327,7 @@ private fun ControlMethodCard(
                 IconButton(onClick = onRetryClick) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh compatibility"
+                        contentDescription = stringResource(R.string.refresh_compat)
                     )
                 }
             }
@@ -333,7 +335,7 @@ private fun ControlMethodCard(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "Choose how the app should control network settings. Root method requires a rooted device, while Shizuku method works with non-rooted devices that have Shizuku installed.",
+                text = stringResource(R.string.control_method_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -358,12 +360,12 @@ private fun ControlMethodCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Root Method",
+                        text = stringResource(R.string.root_method),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "Requires rooted device with root access granted",
+                        text = stringResource(R.string.root_method_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -380,7 +382,7 @@ private fun ControlMethodCard(
                     is CompatibilityState.Compatible -> {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Compatible",
+                            contentDescription = stringResource(R.string.cd_compatible),
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
@@ -388,7 +390,7 @@ private fun ControlMethodCard(
                     is CompatibilityState.PermissionDenied -> {
                         Icon(
                             imageVector = Icons.Default.Error,
-                            contentDescription = "Permission denied",
+                            contentDescription = stringResource(R.string.cd_permission_denied),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
                         )
@@ -396,7 +398,7 @@ private fun ControlMethodCard(
                     is CompatibilityState.Incompatible -> {
                         Icon(
                             imageVector = Icons.Default.Error,
-                            contentDescription = "Error",
+                            contentDescription = stringResource(R.string.cd_error),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
                         )
@@ -422,12 +424,12 @@ private fun ControlMethodCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Shizuku Method",
+                        text = stringResource(R.string.shizuku_method),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "Works with non-rooted devices using Shizuku service",
+                        text = stringResource(R.string.shizuku_method_desc),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -444,7 +446,7 @@ private fun ControlMethodCard(
                     is CompatibilityState.Compatible -> {
                         Icon(
                             imageVector = Icons.Default.CheckCircle,
-                            contentDescription = "Compatible",
+                            contentDescription = stringResource(R.string.cd_compatible),
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(20.dp)
                         )
@@ -452,7 +454,7 @@ private fun ControlMethodCard(
                     is CompatibilityState.PermissionDenied -> {
                         Icon(
                             imageVector = Icons.Default.Error,
-                            contentDescription = "Permission denied",
+                            contentDescription = stringResource(R.string.cd_permission_denied),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
                         )
@@ -460,7 +462,7 @@ private fun ControlMethodCard(
                     is CompatibilityState.Incompatible -> {
                         Icon(
                             imageVector = Icons.Default.Error,
-                            contentDescription = "Not available",
+                            contentDescription = stringResource(R.string.cd_not_available),
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
                         )
@@ -482,7 +484,7 @@ private fun AboutCard() {
                 .padding(16.dp)
         ) {
             Text(
-                text = "About",
+                text = stringResource(R.string.about),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
@@ -490,7 +492,7 @@ private fun AboutCard() {
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = "Source Code",
+                text = stringResource(R.string.source_code),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Medium
             )
@@ -506,7 +508,7 @@ private fun AboutCard() {
             Spacer(modifier = Modifier.height(24.dp))
             
             Text(
-                text = "Open Source Licenses",
+                text = stringResource(R.string.open_source_licenses),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Medium
             )

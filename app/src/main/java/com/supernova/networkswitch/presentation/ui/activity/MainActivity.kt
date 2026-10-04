@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.presentation.ui.activity
 
+import com.supernova.networkswitch.presentation.viewmodel.AutoSwitchViewModel
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -29,9 +30,11 @@ import dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     
     private val viewModel: MainViewModel by viewModels()
+    private val autoSwitchViewModel: AutoSwitchViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        autoSwitchViewModel.ensureRunning()
         
         setContent {
             NetworkSwitchTheme {
@@ -71,13 +74,13 @@ private fun MainScreen(
                     IconButton(onClick = onNetworkModeConfigClick) {
                         Icon(
                             imageVector = Icons.Default.Tune,
-                            contentDescription = "Network Mode Configuration"
+                            contentDescription = stringResource(R.string.network_mode_configuration)
                         )
                     }
                     IconButton(onClick = onSettingsClick) {
                         Icon(
                             imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings"
+                            contentDescription = stringResource(R.string.settings)
                         )
                     }
                 }
@@ -103,7 +106,7 @@ private fun MainScreen(
             if (compatibilityState is CompatibilityState.Compatible) {
                 NetworkToggleCard(
                     currentMode = viewModel.currentNetworkMode,
-                    toggleButtonText = viewModel.getToggleButtonText(),
+                    toggleButtonText = stringResource(R.string.switch_to, stringResource(viewModel.getNextMode().labelRes)),
                     isLoading = viewModel.isLoading,
                     onToggleClick = { viewModel.toggleNetworkMode() }
                 )

@@ -17,6 +17,9 @@ class ImsSwitchEngineTest {
     /** Stand-in for the radio and the persisted state. */
     private class Fake(var mode: Int = 26, var saved: Int = NO_SAVED_MODE) {
         var writeSucceeds = true
+
+        /** The write takes effect although it is reported as failed (a lagging read-back). */
+        var appliesButReportsFailure = false
         var readable = true
         val writes = mutableListOf<Int>()
 
@@ -24,7 +27,7 @@ class ImsSwitchEngineTest {
             readMode = { if (readable) mode else null },
             writeMode = { target ->
                 writes += target
-                if (writeSucceeds) mode = target
+                if (writeSucceeds || appliesButReportsFailure) mode = target
                 writeSucceeds
             },
             loadSavedMode = { saved },
@@ -184,5 +187,49 @@ class ImsSwitchEngineTest {
         active.engine().restoreIfActive()
         assertEquals(nrLteGsmWcdma, active.mode)
         assertEquals(NO_SAVED_MODE, active.saved)
+    }
+
+    @Test
+    fun `a switch that took effect but was reported as failed keeps the saved mode`() = runTest {
+        val fake = Fake(mode = 26).apply { appliesButReportsFailure = true }
+        val engine = fake.engine()
+
+        engine.onSample(SAMPLE_VOLTE)
+        engine.onSample(SAMPLE_VOLTE)
+
+        assertEquals(lteOnly, fake.mode)
+        assertEquals(nrLteGsmWcdma, fake.saved)
+
+        fake.appliesButReportsFailure = false
+        engine.onSample(SAMPLE_NO_VOLTE)
+        engine.onSample(SAMPLE_NO_VOLTE)
+        assertEquals(nrLteGsmWcdma, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+    }
+
+    @Test
+    fun `a restore that took effect but was reported as failed still clears the saved mode`() = runTest {
+        val fake = Fake(mode = lteOnly, saved = nrLteGsmWcdma).apply { appliesButReportsFailure = true }
+        val engine = fake.engine()
+
+        engine.onSample(SAMPLE_NO_VOLTE)
+        engine.onSample(SAMPLE_NO_VOLTE)
+
+        assertEquals(nrLteGsmWcdma, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+    }
+
+    @Test
+    fun `a mode changed meanwhile is not overwritten when VoLTE goes away`() = runTest {
+        val threeG = 2
+        val fake = Fake(mode = threeG, saved = nrLteGsmWcdma) // user left 4G only on purpose
+        val engine = fake.engine()
+
+        engine.onSample(SAMPLE_NO_VOLTE)
+        engine.onSample(SAMPLE_NO_VOLTE)
+
+        assertEquals(threeG, fake.mode)
+        assertTrue(fake.writes.isEmpty())
+        assertEquals(NO_SAVED_MODE, fake.saved)
     }
 }

@@ -13,7 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Brings the VoLTE watcher back after a reboot when the user had it switched on.
+ * Brings the VoLTE watcher back after a reboot or an app update when the user had it switched on.
  *
  * Uses a Hilt entry point rather than `@AndroidEntryPoint`: a Kotlin receiver has to call
  * `super.onReceive` for the generated injection, and that call hits the abstract
@@ -28,7 +28,10 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // After an app update the system stops the service and sends no boot broadcast.
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED &&
+            intent.action != Intent.ACTION_MY_PACKAGE_REPLACED
+        ) return
 
         val appContext = context.applicationContext
         val pending = goAsync()
@@ -41,7 +44,7 @@ class BootReceiver : BroadcastReceiver() {
                     ImsAutoSwitchService.start(appContext)
                 }
             } catch (e: Exception) {
-                Log.e("NetworkSwitch", "Could not restart the VoLTE watcher after boot", e)
+                Log.e("NetworkSwitch", "Could not restart the VoLTE watcher", e)
             } finally {
                 pending.finish()
             }

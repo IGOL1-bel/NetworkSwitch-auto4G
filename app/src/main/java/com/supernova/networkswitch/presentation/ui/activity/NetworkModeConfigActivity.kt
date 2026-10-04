@@ -71,7 +71,7 @@ private fun NetworkModeConfigScreen(
                     IconButton(onClick = onBackClick) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = stringResource(R.string.back)
                         )
                     }
                 }
@@ -142,7 +142,7 @@ private fun NetworkModeConfigScreen(
                         .padding(16.dp)
                 ) {
                     Text(
-                        text = "Configuration Preview",
+                        text = stringResource(R.string.config_preview),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -150,7 +150,7 @@ private fun NetworkModeConfigScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     
                     Text(
-                        text = "Toggle will switch between:",
+                        text = stringResource(R.string.toggle_switches_between),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -158,13 +158,13 @@ private fun NetworkModeConfigScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     
                     Text(
-                        text = "• ${currentConfig.modeA.displayName}",
+                        text = "• ${stringResource(currentConfig.modeA.labelRes)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
                     
                     Text(
-                        text = "• ${currentConfig.modeB.displayName}",
+                        text = "• ${stringResource(currentConfig.modeB.labelRes)}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary
                     )
@@ -207,7 +207,7 @@ private fun NetworkModeConfigScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Mode A and Mode B must be different",
+                            text = stringResource(R.string.modes_must_differ),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
