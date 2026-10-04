@@ -235,27 +235,40 @@ class ImsAutoSwitchService : Service() {
         pollingSeconds = null
         lastStatus = ""
         var timedOut = true // first pass registers the callbacks
+        var quick = false
+        var lastRegisterAt = -WATCHDOG_MS
         while (true) {
             try {
                 val subId = currentSubId()
-                if (subId >= 0 && (timedOut || !listening || subId != registeredSubId)) {
+                val now = SystemClock.elapsedRealtime()
+                val registerDue = timedOut && now - lastRegisterAt >= WATCHDOG_MS
+                if (subId >= 0 && (registerDue || !listening || subId != registeredSubId)) {
                     register(subId)
+                    lastRegisterAt = now
                 }
-                evaluate()
+                evaluate(quick)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 AppLog.e("VoLTE check failed", e)
             }
+            // While 4G only is held by us, losing the signal produces no IMS event at all, and
+            // that is exactly when the previous mode has to come back: look every few seconds.
+            val held = listening && autoSwitchPreferences.hasSavedMode()
             // With probing on, a quiet spell must not outlast the probe interval: nothing else
             // would wake the loop while the phone sits on 3G.
-            scheduleHeartbeat()
-            val waitMs = if (listening) watchdogMs() else FALLBACK_POLL_MS
-            AppLog.i("waiting up to ${waitMs / 1000} s for an event (listening=$listening)")
+            scheduleHeartbeat(if (held) HELD_HEARTBEAT_MS else HEARTBEAT_MS)
+            val waitMs = when {
+                !listening -> FALLBACK_POLL_MS
+                held -> HELD_WATCHDOG_MS
+                else -> watchdogMs()
+            }
+            AppLog.i("waiting up to ${waitMs / 1000} s for an event (listening=$listening, held=$held)")
             timedOut = withTimeoutOrNull(waitMs) {
                 events.receive()
                 false
             } ?: true
+            quick = held && timedOut
             AppLog.i(if (timedOut) "woke up: timeout" else "woke up: event or heartbeat")
         }
     }
@@ -301,11 +314,11 @@ class ImsAutoSwitchService : Service() {
      * that may fire in Doze wakes the service and forces a check. Inexact on purpose, since exact
      * alarms need a permission the user would have to grant; Doze spaces them out to ~9 minutes.
      */
-    private fun scheduleHeartbeat() {
+    private fun scheduleHeartbeat(delayMs: Long = HEARTBEAT_MS) {
         try {
             alarmManager.setAndAllowWhileIdle(
                 AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                SystemClock.elapsedRealtime() + HEARTBEAT_MS,
+                SystemClock.elapsedRealtime() + delayMs,
                 heartbeatIntent,
             )
         } catch (e: Exception) {
@@ -332,11 +345,18 @@ class ImsAutoSwitchService : Service() {
     }
 
     /** Two samples [SETTLE_MS] apart, which is what the engine needs to confirm a change. */
-    private suspend fun evaluate() {
-        eventWakeLock.acquire(EVENT_WAKE_MS)
-        repeat(ImsSwitchEngine.DEFAULT_CONFIRMATIONS) { index ->
-            if (index > 0) delay(SETTLE_MS)
+    private suspend fun evaluate(quick: Boolean = false) {
+        if (quick) {
+            // A routine look while 4G only is held: one sample, and the extra samples below
+            // take over only if it shows a change.
+            eventWakeLock.acquire(QUICK_WAKE_MS)
             sampleOnce()
+        } else {
+            eventWakeLock.acquire(EVENT_WAKE_MS)
+            repeat(ImsSwitchEngine.DEFAULT_CONFIRMATIONS) { index ->
+                if (index > 0) delay(SETTLE_MS)
+                sampleOnce()
+            }
         }
         // A change seen only once is not acted on, and nothing else would look again for up to
         // the watchdog interval (longer while the CPU sleeps). Keep sampling shortly instead.
@@ -656,6 +676,14 @@ class ImsAutoSwitchService : Service() {
         AppLog.i("manual mode requested: $mode subId=$subId")
         if (subId < 0) return
         try {
+            if (autoSwitchPreferences.hasSavedMode() && autoSwitchPreferences.savedSubId() == subId) {
+                val current = networkControlRepository.getCurrentNetworkMode(subId)?.value
+                if (current == mode) {
+                    // Nothing to change: do not throw away the mode waiting to be restored.
+                    AppLog.i("manual mode $mode is already active, keeping the saved restore mode")
+                    return
+                }
+            }
             if (autoSwitchPreferences.hasSavedMode()) {
                 val savedSub = autoSwitchPreferences.savedSubId()
                 // Another SIM was held on 4G only: give that one its mode back first.
@@ -718,6 +746,11 @@ class ImsAutoSwitchService : Service() {
 
         /** Longest quiet spell before the callbacks are re-registered as a precaution. */
         private const val WATCHDOG_MS = 120_000L
+
+        /** Look interval while we hold 4G only, and the matching alarm for when the CPU sleeps. */
+        private const val HELD_WATCHDOG_MS = 20_000L
+        private const val HELD_HEARTBEAT_MS = 30_000L
+        private const val QUICK_WAKE_MS = 8_000L
 
         /** How often to check when the privileged process refuses the IMS callbacks. */
         private const val FALLBACK_POLL_MS = 10_000L
