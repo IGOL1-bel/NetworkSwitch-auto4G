@@ -102,6 +102,7 @@ class ImsAutoSwitchService : Service() {
 
     private var holdSample: Int? = null
     private var manualMode = -1
+    private var holdSince = 0L
 
     private val alarmManager by lazy { getSystemService(AlarmManager::class.java) }
 
@@ -254,7 +255,7 @@ class ImsAutoSwitchService : Service() {
             }
             // While 4G only is held by us, losing the signal produces no IMS event at all, and
             // that is exactly when the previous mode has to come back: look every few seconds.
-            val held = listening && autoSwitchPreferences.hasSavedMode()
+            val held = listening && (autoSwitchPreferences.hasSavedMode() || holdSample != null)
             // With probing on, a quiet spell must not outlast the probe interval: nothing else
             // would wake the loop while the phone sits on 3G.
             scheduleHeartbeat(if (held) HELD_HEARTBEAT_MS else HEARTBEAT_MS)
@@ -387,11 +388,33 @@ class ImsAutoSwitchService : Service() {
         holdSample?.let { held ->
             val now = imsStateProvider.volteState(subId)
             val known = now == ImsSwitchEngine.SAMPLE_VOLTE || now == ImsSwitchEngine.SAMPLE_NO_VOLTE
-            if (!known || now == held) {
-                publish(getString(R.string.status_manual_hold, modeName(manualMode)))
-                return
+            // The hold only makes sense while the mode the user picked is really in place.
+            val actual = networkControlRepository.getCurrentNetworkMode(subId)?.value
+            if (actual != null && actual != manualMode) {
+                AppLog.i("hold dropped: mode is $actual now, not the $manualMode picked in the notification")
+                holdSample = null
+            } else if (!known || now == held) {
+                val lteOnly = NetworkMode.LTE_ONLY.value
+                val expired = manualMode == lteOnly &&
+                    now == ImsSwitchEngine.SAMPLE_NO_VOLTE &&
+                    SystemClock.elapsedRealtime() - holdSince >= HOLD_MAX_MS
+                if (!expired) {
+                    publish(getString(R.string.status_manual_hold, modeName(manualMode)))
+                    return
+                }
+                // 4G only was picked by hand, yet VoLTE has not shown up for minutes: the phone
+                // is most likely without service. Hand it over to the default mode, if one is set.
+                holdSample = null
+                val fallback = autoSwitchPreferences.restoreModeNow()
+                if (fallback != AutoSwitchPreferences.RESTORE_PREVIOUS && fallback != lteOnly) {
+                    AppLog.i("hold expired without VoLTE: returning to mode $fallback")
+                    autoSwitchPreferences.setSavedMode(fallback, subId)
+                } else {
+                    AppLog.i("hold expired without VoLTE, no default mode chosen: nothing to return to")
+                }
+            } else {
+                holdSample = null
             }
-            holdSample = null
         }
         if (autoSwitchPreferences.hasSavedMode()) {
             val savedSub = autoSwitchPreferences.savedSubId()
@@ -691,8 +714,15 @@ class ImsAutoSwitchService : Service() {
                 autoSwitchPreferences.setSavedMode(ImsSwitchEngine.NO_SAVED_MODE, -1)
             }
             manualMode = mode
+            holdSince = SystemClock.elapsedRealtime()
             holdSample = imsStateProvider.volteState(subId)
-            val ok = networkControlRepository.setNetworkMode(subId, target).isSuccess
+            var ok = networkControlRepository.setNetworkMode(subId, target).isSuccess
+            if (ok) {
+                delay(MANUAL_VERIFY_MS)
+                val actual = networkControlRepository.getCurrentNetworkMode(subId)?.value
+                AppLog.i("manual mode $mode read back -> $actual")
+                if (actual != null && actual != mode) ok = false
+            }
             AppLog.i("manual mode $mode -> ${if (ok) "accepted" else "FAILED"}, holding until VoLTE changes from $holdSample")
             publish(
                 if (ok) getString(R.string.status_manual_hold, modeName(mode))
@@ -751,6 +781,10 @@ class ImsAutoSwitchService : Service() {
         private const val HELD_WATCHDOG_MS = 20_000L
         private const val HELD_HEARTBEAT_MS = 30_000L
         private const val QUICK_WAKE_MS = 8_000L
+        private const val MANUAL_VERIFY_MS = 1_500L
+
+        /** A hand-picked 4G only without VoLTE this long counts as "no service". */
+        private const val HOLD_MAX_MS = 5 * 60_000L
 
         /** How often to check when the privileged process refuses the IMS callbacks. */
         private const val FALLBACK_POLL_MS = 10_000L
