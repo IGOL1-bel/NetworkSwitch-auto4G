@@ -1,5 +1,8 @@
 package com.supernova.networkswitch.presentation.ui.activity
 
+import kotlinx.coroutines.launch
+import com.supernova.networkswitch.util.LogExporter
+import com.supernova.networkswitch.util.AppLog
 import com.supernova.networkswitch.presentation.ui.composable.ModeDropdown
 import com.supernova.networkswitch.R
 import androidx.compose.ui.res.stringResource
@@ -155,6 +158,8 @@ private fun SettingsScreen(
                 },
                 onDiagnosticsClick = { autoSwitchViewModel.runDiagnostics() }
             )
+
+            LogCard()
 
             // About Section
             AboutCard()
@@ -373,6 +378,60 @@ private fun AutoSwitchCard(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LogCard() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var sizeKb by remember { mutableStateOf(AppLog.sizeBytes() / 1024) }
+
+    fun toast(text: String) = android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_LONG).show()
+    val savedText = stringResource(R.string.log_saved)
+    val saveFailedText = stringResource(R.string.log_save_failed)
+    val clearedText = stringResource(R.string.log_cleared)
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.log_title),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.log_desc),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.log_size, sizeKb),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = {
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) { LogExporter.share(context) }
+                }) { Text(stringResource(R.string.log_share)) }
+                OutlinedButton(onClick = {
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val name = LogExporter.saveToDownloads(context)
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            toast(if (name != null) savedText.format(name) else saveFailedText)
+                        }
+                    }
+                }) { Text(stringResource(R.string.log_save)) }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(onClick = {
+                AppLog.clear()
+                sizeKb = 0
+                toast(clearedText)
+            }) { Text(stringResource(R.string.log_clear)) }
         }
     }
 }

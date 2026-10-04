@@ -138,4 +138,13 @@
     <string name="status_radio_reset_done">Radio reset done, the network should return shortly</string>
     <string name="status_radio_reset_failed">Could not toggle airplane mode through the control method</string>
     <string name="status_adopted">VoLTE on, already 4G only; when it is gone, switching to %1$s</string>
+    <string name="log_title">Log</string>
+    <string name="log_desc">Records what the auto-switch does, so a problem can be traced. Share it, or save it to Downloads and send the file to the developer.</string>
+    <string name="log_size">Log size: %1$d KB</string>
+    <string name="log_share">Share log</string>
+    <string name="log_save">Save to Downloads</string>
+    <string name="log_clear">Clear log</string>
+    <string name="log_saved">Saved to Downloads: %1$s</string>
+    <string name="log_save_failed">Could not save the log</string>
+    <string name="log_cleared">Log cleared</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.autoswitch
 
+import com.supernova.networkswitch.util.AppLog
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.NonCancellable
 import android.graphics.drawable.Icon
@@ -137,17 +138,23 @@ class ImsAutoSwitchService : Service() {
     private val imsListener = object : IImsEventListener.Stub() {
         override fun onImsChanged() {
             if (destroyed) return
+            AppLog.i("IMS event received")
             eventWakeLock.acquire(EVENT_WAKE_MS)
             events.trySend(Unit)
         }
     }
 
     private val engine = ImsSwitchEngine(
-        readMode = { networkControlRepository.getCurrentNetworkMode(targetSubId())?.value },
+        readMode = {
+            val mode = networkControlRepository.getCurrentNetworkMode(targetSubId())?.value
+            AppLog.i("read mode -> $mode")
+            mode
+        },
         writeMode = { mode -> applyMode(mode) },
         loadSavedMode = { autoSwitchPreferences.savedMode() },
         storeSavedMode = { mode ->
             val subId = if (mode == ImsSwitchEngine.NO_SAVED_MODE) -1 else currentSubId()
+            AppLog.i("save previous mode=$mode subId=$subId")
             autoSwitchPreferences.setSavedMode(mode, subId)
         },
         failureCooldown = FAILURE_COOLDOWN_SAMPLES,
@@ -159,7 +166,13 @@ class ImsAutoSwitchService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        AppLog.i("Service created, pid=${android.os.Process.myPid()}")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        AppLog.i("onStartCommand action=${intent?.action ?: "none"} restarted=${intent == null}")
         if (!promoteToForeground()) {
             stopSelf()
             return START_NOT_STICKY
@@ -175,6 +188,7 @@ class ImsAutoSwitchService : Service() {
             watching = true
             scope.launch { observeEnabled() }
             scope.launch { observeActionModes() }
+            scope.launch { logSnapshot() }
         } else if (intent?.action == ACTION_HEARTBEAT) {
             // The alarm woke the process: run a check now instead of waiting for a timer that
             // may have been stuck while the phone slept.
@@ -187,6 +201,7 @@ class ImsAutoSwitchService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         destroyed = true
+        AppLog.i("Service destroyed")
         scope.cancel()
         // The privileged side keeps the registration until told otherwise; without this every IMS
         // event would keep waking the app. Best effort, on its own scope since ours is cancelled.
@@ -216,6 +231,7 @@ class ImsAutoSwitchService : Service() {
      * [WATCHDOG_MS] it evaluates anyway and re-registers the callbacks.
      */
     private suspend fun watch() {
+        AppLog.i("watching by IMS events")
         pollingSeconds = null
         lastStatus = ""
         var timedOut = true // first pass registers the callbacks
@@ -229,16 +245,18 @@ class ImsAutoSwitchService : Service() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "VoLTE check failed", e)
+                AppLog.e("VoLTE check failed", e)
             }
             // With probing on, a quiet spell must not outlast the probe interval: nothing else
             // would wake the loop while the phone sits on 3G.
             scheduleHeartbeat()
             val waitMs = if (listening) watchdogMs() else FALLBACK_POLL_MS
+            AppLog.i("waiting up to ${waitMs / 1000} s for an event (listening=$listening)")
             timedOut = withTimeoutOrNull(waitMs) {
                 events.receive()
                 false
             } ?: true
+            AppLog.i(if (timedOut) "woke up: timeout" else "woke up: event or heartbeat")
         }
     }
 
@@ -248,6 +266,7 @@ class ImsAutoSwitchService : Service() {
      * awake while this runs, otherwise the timer stalls whenever the phone sleeps.
      */
     private suspend fun poll(intervalSec: Int) {
+        AppLog.i("polling every $intervalSec s")
         imsStateProvider.stopEvents()
         listening = false
         registeredSubId = null
@@ -261,7 +280,7 @@ class ImsAutoSwitchService : Service() {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.e(TAG, "VoLTE check failed", e)
+                    AppLog.e("VoLTE check failed", e)
                 }
                 scheduleHeartbeat()
                 // Wakes early on the alarm; otherwise the plain interval.
@@ -290,7 +309,7 @@ class ImsAutoSwitchService : Service() {
                 heartbeatIntent,
             )
         } catch (e: Exception) {
-            Log.w(TAG, "Could not schedule the heartbeat alarm", e)
+            AppLog.w("Could not schedule the heartbeat alarm", e)
         }
     }
 
@@ -301,8 +320,12 @@ class ImsAutoSwitchService : Service() {
 
     private suspend fun register(subId: Int) {
         listening = imsStateProvider.startEvents(subId, imsListener)
+        AppLog.i("register events subId=$subId -> $listening")
+        // The privileged side keeps the reason in its status line; ask for it once.
+        imsStateProvider.diagnostics(subId).lines().firstOrNull { it.startsWith("IMS events") }
+            ?.let { AppLog.i(it) }
         registeredSubId = if (listening) subId else null
-        if (!listening) Log.w(TAG, "IMS callbacks unavailable for subId=$subId, polling instead")
+        if (!listening) AppLog.w("IMS callbacks unavailable for subId=$subId, polling instead")
         // Registering reports the current state once; the evaluation right after this already
         // covers it, so drop that echo instead of evaluating twice back to back.
         events.tryReceive()
@@ -342,9 +365,24 @@ class ImsAutoSwitchService : Service() {
                 engine.restoreIfActive()?.let { publish(describe(it)) }
             }
         }
-        val status = engine.onSample(imsStateProvider.volteState(subId))
+        val sample = imsStateProvider.volteState(subId)
+        val status = engine.onSample(sample)
+        logSample(subId, sample, status)
         publish(describe(status))
         if (status.code == ImsSwitchEngine.Code.NO_VOLTE_IDLE) maybeProbe(subId)
+    }
+
+    private var lastSampleKey = ""
+    private var lastSampleLoggedAt = 0L
+
+    /** Logs a sample when it changed, and otherwise once a minute, so polling does not flood the file. */
+    private fun logSample(subId: Int, sample: Int, status: ImsSwitchEngine.Status) {
+        val key = "$subId/$sample/${status.code}/${status.mode}"
+        val now = SystemClock.elapsedRealtime()
+        if (key == lastSampleKey && now - lastSampleLoggedAt < SAMPLE_LOG_MS) return
+        lastSampleKey = key
+        lastSampleLoggedAt = now
+        AppLog.i("sample subId=$subId volte=$sample -> ${status.code} mode=${status.mode}")
     }
 
     /**
@@ -361,12 +399,14 @@ class ImsAutoSwitchService : Service() {
         lastProbeAt = now
 
         eventWakeLock.acquire(PROBE_WAKE_MS)
+        AppLog.i("probe: trying 4G only to look for VoLTE")
         publish(getString(R.string.status_probing))
         val result = engine.probe(
             volteState = { imsStateProvider.volteState(subId) },
             attempts = PROBE_ATTEMPTS,
             pause = { delay(PROBE_STEP_MS) },
         )
+        AppLog.i("probe result: ${result?.code} mode=${result?.mode}")
         if (result != null) publish(describe(result))
     }
 
@@ -376,11 +416,12 @@ class ImsAutoSwitchService : Service() {
      * 4G only. The service stays up (and cancellable by turning the feature back on) meanwhile.
      */
     private suspend fun shutDown() {
+        AppLog.i("auto-switch off: restoring if needed (saved=${autoSwitchPreferences.savedMode()})")
         try {
             imsStateProvider.stopEvents()
             var attempts = 0
             while (autoSwitchPreferences.hasSavedMode() && attempts < RESTORE_ATTEMPTS) {
-                engine.restoreIfActive()?.let { Log.i(TAG, "Auto-switch turned off: $it") }
+                engine.restoreIfActive()?.let { AppLog.i("Auto-switch turned off: $it") }
                 if (!autoSwitchPreferences.hasSavedMode()) break
                 attempts++
                 delay(RESTORE_RETRY_MS)
@@ -388,7 +429,7 @@ class ImsAutoSwitchService : Service() {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Restoring the previous mode failed", e)
+            AppLog.e("Restoring the previous mode failed", e)
         }
         autoSwitchPreferences.setStatus("")
         autoSwitchPreferences.setLastCheck(0L)
@@ -404,7 +445,9 @@ class ImsAutoSwitchService : Service() {
     private suspend fun applyMode(mode: Int): Boolean {
         val target = NetworkMode.fromValue(mode) ?: return false
         val subId = targetSubId()
-        if (networkControlRepository.setNetworkMode(subId, target).isFailure) return false
+        val setResult = networkControlRepository.setNetworkMode(subId, target)
+        AppLog.i("write mode $mode subId=$subId -> ${if (setResult.isSuccess) "accepted" else "FAILED: ${setResult.exceptionOrNull()?.message}"}")
+        if (setResult.isFailure) return false
 
         // The radio applies the change asynchronously, so the first read-back can still show the
         // old value: look a few times before calling it a failure.
@@ -412,8 +455,10 @@ class ImsAutoSwitchService : Service() {
             delay(waitMs)
             val now = networkControlRepository.getCurrentNetworkMode(subId)?.value
             // 2G/3G "preferred" (0) and "auto" (3) map to the same radio bits and read back alike.
+            AppLog.i("read-back after ${waitMs} ms: $now (wanted $mode)")
             if (now == mode || (now != null && now in EQUIVALENT_MODES && mode in EQUIVALENT_MODES)) return true
         }
+        AppLog.w("mode $mode did not stick")
         return false
     }
 
@@ -464,6 +509,7 @@ class ImsAutoSwitchService : Service() {
         // Even an unchanged status refreshes the time now and then, so a stale notification
         // can only mean the service is not running its checks.
         if (!changed && now - lastCheckShownAt < LAST_CHECK_UPDATE_MS) return
+        if (changed) AppLog.i("status: $status")
         lastStatus = status
         lastCheckShownAt = now
         if (changed) autoSwitchPreferences.setStatus(status)
@@ -487,7 +533,7 @@ class ImsAutoSwitchService : Service() {
             }
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Could not start in the foreground", e)
+            AppLog.e("Could not start in the foreground", e)
             false
         }
     }
@@ -544,15 +590,27 @@ class ImsAutoSwitchService : Service() {
             eventWakeLock.acquire(RADIO_RESET_WAKE_MS)
             publish(getString(R.string.status_radio_resetting))
             enabled = imsStateProvider.setAirplaneMode(true)
+            AppLog.i("radio reset: airplane mode on -> $enabled")
             if (enabled) delay(RADIO_RESET_MS)
         } finally {
             withContext(NonCancellable) {
                 // Also when the "enable" call looked like a failure: turning it off is harmless.
-                imsStateProvider.setAirplaneMode(false)
+                val off = imsStateProvider.setAirplaneMode(false)
+                AppLog.i("radio reset: airplane mode off -> $off")
                 radioResetting = false
             }
         }
         publish(getString(if (enabled) R.string.status_radio_reset_done else R.string.status_radio_reset_failed))
+    }
+
+    private suspend fun logSnapshot() {
+        val p = autoSwitchPreferences
+        AppLog.i(
+            "settings: enabled=${p.isEnabled()} detection=${p.detectionMode.first()} " +
+                "poll=${p.pollIntervalSec.first()}s probe=${p.probeEnabled.first()}/${p.probeIntervalMin.first()}min " +
+                "restore=${p.restoreModeNow()} buttons=${p.actionModeA.first()},${p.actionModeB.first()} " +
+                "saved=${p.savedMode()} savedSub=${p.savedSubId()} defaultSub=${currentSubId()}"
+        )
     }
 
     private suspend fun observeActionModes() {
@@ -580,6 +638,7 @@ class ImsAutoSwitchService : Service() {
     private suspend fun applyManualMode(mode: Int) {
         val target = NetworkMode.fromValue(mode) ?: return
         val subId = currentSubId()
+        AppLog.i("manual mode requested: $mode subId=$subId")
         if (subId < 0) return
         try {
             if (autoSwitchPreferences.hasSavedMode()) {
@@ -591,6 +650,7 @@ class ImsAutoSwitchService : Service() {
             manualMode = mode
             holdSample = imsStateProvider.volteState(subId)
             val ok = networkControlRepository.setNetworkMode(subId, target).isSuccess
+            AppLog.i("manual mode $mode -> ${if (ok) "accepted" else "FAILED"}, holding until VoLTE changes from $holdSample")
             publish(
                 if (ok) getString(R.string.status_manual_hold, modeName(mode))
                 else getString(R.string.status_manual_failed, modeName(mode))
@@ -598,7 +658,7 @@ class ImsAutoSwitchService : Service() {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Manual mode change failed", e)
+            AppLog.e("Manual mode change failed", e)
         }
     }
 
@@ -650,6 +710,7 @@ class ImsAutoSwitchService : Service() {
         private const val PROBE_ATTEMPTS = 8
         private const val PROBE_WAKE_MS = 60_000L
 
+        private const val SAMPLE_LOG_MS = 60_000L
         private const val ACTION_SET_MODE = "com.supernova.networkswitch.SET_MODE"
         private const val EXTRA_MODE = "mode"
         private const val ACTION_RESET_RADIO = "com.supernova.networkswitch.RESET_RADIO"

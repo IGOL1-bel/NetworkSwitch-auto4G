@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.autoswitch
 
+import com.supernova.networkswitch.util.AppLog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -34,6 +35,8 @@ class BootReceiver : BroadcastReceiver() {
         ) return
 
         val appContext = context.applicationContext
+        AppLog.init(appContext)
+        AppLog.i("BootReceiver: ${intent.action}")
         val pending = goAsync()
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -44,7 +47,7 @@ class BootReceiver : BroadcastReceiver() {
                     ImsAutoSwitchService.start(appContext)
                 }
             } catch (e: Exception) {
-                Log.e("NetworkSwitch", "Could not restart the VoLTE watcher", e)
+                AppLog.e("Could not restart the VoLTE watcher", e)
             } finally {
                 pending.finish()
             }

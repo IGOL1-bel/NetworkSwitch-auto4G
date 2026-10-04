@@ -132,4 +132,13 @@
     <string name="status_radio_reset_done">Радио сброшено, сеть должна скоро вернуться</string>
     <string name="status_radio_reset_failed">Не удалось переключить режим полёта выбранным способом управления</string>
     <string name="status_adopted">VoLTE есть, уже «Только 4G»; когда пропадёт, включу «%1$s»</string>
+    <string name="log_title">Журнал</string>
+    <string name="log_desc">Записывает, что делает автопереключение, чтобы можно было разобраться с проблемой. Поделитесь им или сохраните в Загрузки и отправьте файл разработчику.</string>
+    <string name="log_size">Размер журнала: %1$d КБ</string>
+    <string name="log_share">Поделиться журналом</string>
+    <string name="log_save">Сохранить в Загрузки</string>
+    <string name="log_clear">Очистить журнал</string>
+    <string name="log_saved">Сохранено в Загрузки: %1$s</string>
+    <string name="log_save_failed">Не удалось сохранить журнал</string>
+    <string name="log_cleared">Журнал очищен</string>
 </resources>
