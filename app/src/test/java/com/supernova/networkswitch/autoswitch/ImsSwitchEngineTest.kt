@@ -21,6 +21,9 @@ class ImsSwitchEngineTest {
         /** The write takes effect although it is reported as failed (a lagging read-back). */
         var appliesButReportsFailure = false
         var readable = true
+
+        /** Mode to restore instead of the saved one, like the user-chosen default. */
+        var restoreTo: Int? = null
         val writes = mutableListOf<Int>()
 
         fun engine(confirmations: Int = 2, cooldown: Int = 3) = ImsSwitchEngine(
@@ -34,6 +37,7 @@ class ImsSwitchEngineTest {
             storeSavedMode = { saved = it },
             confirmations = confirmations,
             failureCooldown = cooldown,
+            restoreTarget = { saved -> restoreTo ?: saved },
         )
     }
 
@@ -231,5 +235,102 @@ class ImsSwitchEngineTest {
         assertEquals(threeG, fake.mode)
         assertTrue(fake.writes.isEmpty())
         assertEquals(NO_SAVED_MODE, fake.saved)
+    }
+
+    @Test
+    fun `a probe that finds VoLTE keeps 4G only and remembers the previous mode`() = runTest {
+        val gsmWcdmaLte = 9
+        val fake = Fake(mode = gsmWcdmaLte)
+        var looks = 0
+
+        val status = fake.engine().probe(
+            volteState = { if (++looks >= 3) SAMPLE_VOLTE else SAMPLE_NO_VOLTE },
+            attempts = 5,
+            pause = {},
+        )
+
+        assertEquals(ImsSwitchEngine.Code.SWITCHED, status?.code)
+        assertEquals(lteOnly, fake.mode)
+        assertEquals(gsmWcdmaLte, fake.saved)
+        assertEquals(3, looks)
+    }
+
+    @Test
+    fun `a probe that finds no VoLTE gives the previous mode back`() = runTest {
+        val gsmWcdmaLte = 9
+        val fake = Fake(mode = gsmWcdmaLte)
+
+        val status = fake.engine().probe(volteState = { SAMPLE_NO_VOLTE }, attempts = 3, pause = {})
+
+        assertEquals(ImsSwitchEngine.Code.PROBE_NO_VOLTE, status?.code)
+        assertEquals(gsmWcdmaLte, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+        assertEquals(listOf(lteOnly, gsmWcdmaLte), fake.writes)
+    }
+
+    @Test
+    fun `no probe while already switched, already on 4G only, or unreadable`() = runTest {
+        val active = Fake(mode = lteOnly, saved = nrLteGsmWcdma)
+        assertEquals(null, active.engine().probe({ SAMPLE_VOLTE }, 2, {}))
+
+        val onLte = Fake(mode = lteOnly)
+        assertEquals(null, onLte.engine().probe({ SAMPLE_VOLTE }, 2, {}))
+
+        val unreadable = Fake(mode = 26).apply { readable = false }
+        assertEquals(null, unreadable.engine().probe({ SAMPLE_VOLTE }, 2, {}))
+
+        assertTrue(active.writes.isEmpty() && onLte.writes.isEmpty() && unreadable.writes.isEmpty())
+    }
+
+    @Test
+    fun `a failed probe switch backs off`() = runTest {
+        val fake = Fake(mode = 9).apply { writeSucceeds = false }
+        val engine = fake.engine(cooldown = 2)
+
+        assertEquals(ImsSwitchEngine.Code.SWITCH_FAILED, engine.probe({ SAMPLE_NO_VOLTE }, 2, {})?.code)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+
+        assertEquals(null, engine.probe({ SAMPLE_NO_VOLTE }, 2, {})) // cooldown 2 -> 1
+        assertEquals(null, engine.probe({ SAMPLE_NO_VOLTE }, 2, {})) // cooldown 1 -> 0
+        assertEquals(1, fake.writes.size)
+    }
+
+    @Test
+    fun `leaving VoLTE coverage restores the chosen default instead of the saved mode`() = runTest {
+        val gsmWcdmaLte = 9
+        val fake = Fake(mode = lteOnly, saved = nrLteGsmWcdma).apply { restoreTo = gsmWcdmaLte }
+        val engine = fake.engine()
+
+        engine.onSample(SAMPLE_NO_VOLTE)
+        val status = engine.onSample(SAMPLE_NO_VOLTE)
+
+        assertEquals(gsmWcdmaLte, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+        assertEquals(gsmWcdmaLte, status.mode)
+    }
+
+    @Test
+    fun `while held on 4G only a long unreadable state counts as no VoLTE`() = runTest {
+        val fake = Fake(mode = lteOnly, saved = nrLteGsmWcdma)
+        val engine = fake.engine()
+
+        repeat(ImsSwitchEngine.UNKNOWN_AS_NO_VOLTE - 1) { engine.onSample(SAMPLE_UNKNOWN) }
+        assertEquals("not yet", lteOnly, fake.mode)
+
+        engine.onSample(SAMPLE_UNKNOWN)
+        engine.onSample(SAMPLE_UNKNOWN)
+
+        assertEquals(nrLteGsmWcdma, fake.mode)
+        assertEquals(NO_SAVED_MODE, fake.saved)
+    }
+
+    @Test
+    fun `an unreadable state without a held switch changes nothing`() = runTest {
+        val fake = Fake(mode = 26)
+        val engine = fake.engine()
+
+        repeat(ImsSwitchEngine.UNKNOWN_AS_NO_VOLTE * 2) { engine.onSample(SAMPLE_UNKNOWN) }
+
+        assertTrue(fake.writes.isEmpty())
     }
 }

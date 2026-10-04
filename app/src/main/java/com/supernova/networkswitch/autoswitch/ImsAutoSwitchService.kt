@@ -1,5 +1,10 @@
 package com.supernova.networkswitch.autoswitch
 
+import android.graphics.drawable.Icon
+import android.app.AlarmManager
+import kotlinx.coroutines.flow.first
+import android.os.SystemClock
+import android.media.AudioManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -77,6 +82,32 @@ class ImsAutoSwitchService : Service() {
     /** Set while the user picked polling; changes the status note. */
     private var pollingSeconds: Int? = null
 
+    private var lastProbeAt = SystemClock.elapsedRealtime()
+
+    private var lastCheckShownAt = 0L
+
+    /** Modes of the two notification buttons; kept current by a collector. */
+    @Volatile
+    private var actionModes = AutoSwitchPreferences.DEFAULT_ACTION_A to AutoSwitchPreferences.DEFAULT_ACTION_B
+
+    /**
+     * After a button press the auto-switch keeps its hands off until the VoLTE state differs
+     * from what it was then: otherwise it would undo the choice within seconds.
+     */
+    private var holdSample: Int? = null
+    private var manualMode = -1
+
+    private val alarmManager by lazy { getSystemService(AlarmManager::class.java) }
+
+    private val heartbeatIntent by lazy {
+        PendingIntent.getForegroundService(
+            this,
+            HEARTBEAT_REQUEST_CODE,
+            Intent(this, ImsAutoSwitchService::class.java).setAction(ACTION_HEARTBEAT),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
+
     /**
      * Keeps the CPU up for the few seconds an event needs. Without it the phone can go back to
      * sleep right after the event woke it, and the second sample (a coroutine timer) only
@@ -115,6 +146,10 @@ class ImsAutoSwitchService : Service() {
             autoSwitchPreferences.setSavedMode(mode, subId)
         },
         failureCooldown = FAILURE_COOLDOWN_SAMPLES,
+        restoreTarget = { previous ->
+            val chosen = autoSwitchPreferences.restoreModeNow()
+            if (chosen == AutoSwitchPreferences.RESTORE_PREVIOUS) previous else chosen
+        },
     )
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -124,9 +159,19 @@ class ImsAutoSwitchService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_SET_MODE) {
+            val mode = intent.getIntExtra(EXTRA_MODE, -1)
+            if (mode >= 0) scope.launch { applyManualMode(mode) }
+        }
         if (!watching) {
             watching = true
             scope.launch { observeEnabled() }
+            scope.launch { observeActionModes() }
+        } else if (intent?.action == ACTION_HEARTBEAT) {
+            // The alarm woke the process: run a check now instead of waiting for a timer that
+            // may have been stuck while the phone slept.
+            eventWakeLock.acquire(EVENT_WAKE_MS)
+            events.trySend(Unit)
         }
         return START_STICKY
     }
@@ -178,7 +223,10 @@ class ImsAutoSwitchService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "VoLTE check failed", e)
             }
-            val waitMs = if (listening) WATCHDOG_MS else FALLBACK_POLL_MS
+            // With probing on, a quiet spell must not outlast the probe interval: nothing else
+            // would wake the loop while the phone sits on 3G.
+            scheduleHeartbeat()
+            val waitMs = if (listening) watchdogMs() else FALLBACK_POLL_MS
             timedOut = withTimeoutOrNull(waitMs) {
                 events.receive()
                 false
@@ -207,7 +255,9 @@ class ImsAutoSwitchService : Service() {
                 } catch (e: Exception) {
                     Log.e(TAG, "VoLTE check failed", e)
                 }
-                delay(intervalSec * 1_000L)
+                scheduleHeartbeat()
+                // Wakes early on the alarm; otherwise the plain interval.
+                withTimeoutOrNull(intervalSec * 1_000L) { events.receive() }
             }
         } finally {
             if (pollWakeLock.isHeld) pollWakeLock.release()
@@ -219,6 +269,28 @@ class ImsAutoSwitchService : Service() {
      * itself queues one more event. That is harmless: registration only happens on a
      * watchdog timeout or when it was missing, never in reaction to an event.
      */
+    /**
+     * Safety net against the phone (or the OEM's power manager) letting the app sleep: an alarm
+     * that may fire in Doze wakes the service and forces a check. Inexact on purpose, since exact
+     * alarms need a permission the user would have to grant; Doze spaces them out to ~9 minutes.
+     */
+    private fun scheduleHeartbeat() {
+        try {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + HEARTBEAT_MS,
+                heartbeatIntent,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not schedule the heartbeat alarm", e)
+        }
+    }
+
+    private suspend fun watchdogMs(): Long {
+        if (!autoSwitchPreferences.probeEnabled.first()) return WATCHDOG_MS
+        return minOf(WATCHDOG_MS, autoSwitchPreferences.probeIntervalMin.first() * 60_000L)
+    }
+
     private suspend fun register(subId: Int) {
         listening = imsStateProvider.startEvents(subId, imsListener)
         registeredSubId = if (listening) subId else null
@@ -247,13 +319,47 @@ class ImsAutoSwitchService : Service() {
             publish(getString(R.string.status_no_data_sim))
             return
         }
+        holdSample?.let { held ->
+            val now = imsStateProvider.volteState(subId)
+            val known = now == ImsSwitchEngine.SAMPLE_VOLTE || now == ImsSwitchEngine.SAMPLE_NO_VOLTE
+            if (!known || now == held) {
+                publish(getString(R.string.status_manual_hold, modeName(manualMode)))
+                return
+            }
+            holdSample = null
+        }
         if (autoSwitchPreferences.hasSavedMode()) {
             val savedSub = autoSwitchPreferences.savedSubId()
             if (savedSub >= 0 && savedSub != subId) {
                 engine.restoreIfActive()?.let { publish(describe(it)) }
             }
         }
-        publish(describe(engine.onSample(imsStateProvider.volteState(subId))))
+        val status = engine.onSample(imsStateProvider.volteState(subId))
+        publish(describe(status))
+        if (status.code == ImsSwitchEngine.Code.NO_VOLTE_IDLE) maybeProbe(subId)
+    }
+
+    /**
+     * A phone parked on 3G or 2G never registers IMS, so "no VoLTE" can simply mean "not on LTE".
+     * When the user allowed it, move to 4G only now and then to find out, and fall back at once
+     * if VoLTE is not there. Never during a call: the switch would cut it.
+     */
+    private suspend fun maybeProbe(subId: Int) {
+        if (!autoSwitchPreferences.probeEnabled.first()) return
+        val intervalMs = autoSwitchPreferences.probeIntervalMin.first() * 60_000L
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastProbeAt < intervalMs) return
+        if (getSystemService(AudioManager::class.java).mode != AudioManager.MODE_NORMAL) return
+        lastProbeAt = now
+
+        eventWakeLock.acquire(PROBE_WAKE_MS)
+        publish(getString(R.string.status_probing))
+        val result = engine.probe(
+            volteState = { imsStateProvider.volteState(subId) },
+            attempts = PROBE_ATTEMPTS,
+            pause = { delay(PROBE_STEP_MS) },
+        )
+        if (result != null) publish(describe(result))
     }
 
     /**
@@ -277,6 +383,8 @@ class ImsAutoSwitchService : Service() {
             Log.e(TAG, "Restoring the previous mode failed", e)
         }
         autoSwitchPreferences.setStatus("")
+        autoSwitchPreferences.setLastCheck(0L)
+        runCatching { alarmManager.cancel(heartbeatIntent) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -313,7 +421,7 @@ class ImsAutoSwitchService : Service() {
         NetworkMode.fromValue(mode)?.label(this) ?: mode.toString()
 
     /** Words an engine result for the notification and the settings card. */
-    private fun describe(status: ImsSwitchEngine.Status): String {
+    private suspend fun describe(status: ImsSwitchEngine.Status): String {
         val mode = modeName(status.mode)
         return when (status.code) {
             ImsSwitchEngine.Code.STATE_UNKNOWN -> getString(R.string.status_unknown)
@@ -326,8 +434,12 @@ class ImsAutoSwitchService : Service() {
             ImsSwitchEngine.Code.RESTORE_FAILED -> getString(R.string.status_restore_failed, mode)
             ImsSwitchEngine.Code.CHANGED_MEANWHILE -> getString(R.string.status_changed_meanwhile)
             ImsSwitchEngine.Code.VOLTE_DETECTED -> getString(R.string.status_volte_detected)
-            ImsSwitchEngine.Code.LOST_RESTORING_SOON -> getString(R.string.status_lost_restoring, mode)
+            ImsSwitchEngine.Code.LOST_RESTORING_SOON -> {
+                val chosen = autoSwitchPreferences.restoreModeNow()
+                getString(R.string.status_lost_restoring, if (chosen == AutoSwitchPreferences.RESTORE_PREVIOUS) mode else modeName(chosen))
+            }
             ImsSwitchEngine.Code.NO_VOLTE_IDLE -> getString(R.string.status_no_volte)
+            ImsSwitchEngine.Code.PROBE_NO_VOLTE -> getString(R.string.status_probe_no_volte, mode)
         }
     }
 
@@ -338,11 +450,17 @@ class ImsAutoSwitchService : Service() {
             listening -> engineStatus
             else -> getString(R.string.status_events_unavailable, engineStatus)
         }
-        if (status == lastStatus) return
+        val now = System.currentTimeMillis()
+        val changed = status != lastStatus
+        // Even an unchanged status refreshes the time now and then, so a stale notification
+        // can only mean the service is not running its checks.
+        if (!changed && now - lastCheckShownAt < LAST_CHECK_UPDATE_MS) return
         lastStatus = status
-        autoSwitchPreferences.setStatus(status)
+        lastCheckShownAt = now
+        if (changed) autoSwitchPreferences.setStatus(status)
+        autoSwitchPreferences.setLastCheck(now)
         getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(status))
+            .notify(NOTIFICATION_ID, buildNotification(status, now))
     }
 
     private fun promoteToForeground(): Boolean {
@@ -374,7 +492,70 @@ class ImsAutoSwitchService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun modeAction(mode: Int, requestCode: Int): Notification.Action {
+        val pending = PendingIntent.getService(
+            this,
+            ACTION_REQUEST_BASE + requestCode,
+            Intent(this, ImsAutoSwitchService::class.java)
+                .setAction(ACTION_SET_MODE)
+                .putExtra(EXTRA_MODE, mode),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(
+            Icon.createWithResource(this, R.drawable.ic_5g_big),
+            modeName(mode),
+            pending,
+        ).build()
+    }
+
+    private suspend fun observeActionModes() {
+        combine(autoSwitchPreferences.actionModeA, autoSwitchPreferences.actionModeB) { a, b -> a to b }
+            .distinctUntilChanged()
+            .collect { modes ->
+                actionModes = modes
+                refreshNotification()
+            }
+    }
+
+    /** Re-posts the notification with the current text and buttons, keeping the shown check time. */
+    private fun refreshNotification() {
+        val whenMs = lastCheckShownAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        getSystemService(NotificationManager::class.java).notify(
+            NOTIFICATION_ID,
+            buildNotification(lastStatus.ifEmpty { getString(R.string.notification_watching) }, whenMs),
+        )
+    }
+
+    /**
+     * A notification button: sets [mode] by hand and pauses the auto-switch until the VoLTE state
+     * changes. A pending restore is dropped, since the user has now chosen what the phone does.
+     */
+    private suspend fun applyManualMode(mode: Int) {
+        val target = NetworkMode.fromValue(mode) ?: return
+        val subId = currentSubId()
+        if (subId < 0) return
+        try {
+            if (autoSwitchPreferences.hasSavedMode()) {
+                val savedSub = autoSwitchPreferences.savedSubId()
+                // Another SIM was held on 4G only: give that one its mode back first.
+                if (savedSub >= 0 && savedSub != subId) engine.restoreIfActive()
+                autoSwitchPreferences.setSavedMode(ImsSwitchEngine.NO_SAVED_MODE, -1)
+            }
+            manualMode = mode
+            holdSample = imsStateProvider.volteState(subId)
+            val ok = networkControlRepository.setNetworkMode(subId, target).isSuccess
+            publish(
+                if (ok) getString(R.string.status_manual_hold, modeName(mode))
+                else getString(R.string.status_manual_failed, modeName(mode))
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Manual mode change failed", e)
+        }
+    }
+
+    private fun buildNotification(text: String, whenMs: Long = System.currentTimeMillis()): Notification {
         val openApp = PendingIntent.getActivity(
             this,
             0,
@@ -386,7 +567,11 @@ class ImsAutoSwitchService : Service() {
             .setContentTitle(getString(R.string.auto_switch_title))
             .setContentText(text)
             .setContentIntent(openApp)
+            .setWhen(whenMs)
+            .setShowWhen(true)
             .setOngoing(true)
+            .addAction(modeAction(actionModes.first, 1))
+            .addAction(modeAction(actionModes.second, 2))
             .build()
     }
 
@@ -411,6 +596,21 @@ class ImsAutoSwitchService : Service() {
 
         /** Waits before each read-back of a freshly written mode. */
         private val VERIFY_DELAYS_MS = longArrayOf(1_500L, 2_500L, 4_000L)
+
+        /** A probe looks for VoLTE this often, this many times: LTE attach plus IMS registration. */
+        private const val PROBE_STEP_MS = 3_000L
+        private const val PROBE_ATTEMPTS = 8
+        private const val PROBE_WAKE_MS = 60_000L
+
+        private const val ACTION_SET_MODE = "com.supernova.networkswitch.SET_MODE"
+        private const val EXTRA_MODE = "mode"
+        private const val ACTION_REQUEST_BASE = 100
+        private const val ACTION_HEARTBEAT = "com.supernova.networkswitch.HEARTBEAT"
+        private const val HEARTBEAT_REQUEST_CODE = 7
+        private const val HEARTBEAT_MS = 3 * 60_000L
+
+        /** Refresh interval of the "last check" time when nothing else changed. */
+        private const val LAST_CHECK_UPDATE_MS = 30_000L
 
         private const val RESTORE_ATTEMPTS = 6
         private const val RESTORE_RETRY_MS = 10_000L

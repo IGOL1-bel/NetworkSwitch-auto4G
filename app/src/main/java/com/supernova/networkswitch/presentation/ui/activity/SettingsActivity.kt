@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.presentation.ui.activity
 
+import com.supernova.networkswitch.presentation.ui.composable.ModeDropdown
 import com.supernova.networkswitch.R
 import androidx.compose.ui.res.stringResource
 import android.Manifest
@@ -76,6 +77,12 @@ private fun SettingsScreen(
     val autoSwitchStatus by autoSwitchViewModel.status.collectAsState()
     val detectionMode by autoSwitchViewModel.detectionMode.collectAsState()
     val pollIntervalSec by autoSwitchViewModel.pollIntervalSec.collectAsState()
+    val probeEnabled by autoSwitchViewModel.probeEnabled.collectAsState()
+    val lastCheck by autoSwitchViewModel.lastCheck.collectAsState()
+    val restoreMode by autoSwitchViewModel.restoreMode.collectAsState()
+    val actionModeA by autoSwitchViewModel.actionModeA.collectAsState()
+    val actionModeB by autoSwitchViewModel.actionModeB.collectAsState()
+    val probeIntervalMin by autoSwitchViewModel.probeIntervalMin.collectAsState()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -117,10 +124,21 @@ private fun SettingsScreen(
             AutoSwitchCard(
                 enabled = autoSwitchEnabled,
                 status = autoSwitchStatus,
+                lastCheck = lastCheck,
+                restoreMode = restoreMode,
+                actionModeA = actionModeA,
+                actionModeB = actionModeB,
+                onRestoreModeChange = { autoSwitchViewModel.setRestoreMode(it) },
+                onActionModeAChange = { autoSwitchViewModel.setActionModeA(it) },
+                onActionModeBChange = { autoSwitchViewModel.setActionModeB(it) },
                 detectionMode = detectionMode,
                 pollIntervalSec = pollIntervalSec,
                 onDetectionModeChange = { autoSwitchViewModel.setDetectionMode(it) },
                 onPollIntervalChange = { autoSwitchViewModel.setPollIntervalSec(it) },
+                probeEnabled = probeEnabled,
+                probeIntervalMin = probeIntervalMin,
+                onProbeEnabledChange = { autoSwitchViewModel.setProbeEnabled(it) },
+                onProbeIntervalChange = { autoSwitchViewModel.setProbeIntervalMin(it) },
                 diagnostics = autoSwitchViewModel.diagnostics,
                 diagnosticsRunning = autoSwitchViewModel.diagnosticsRunning,
                 onEnabledChange = { enable ->
@@ -148,10 +166,21 @@ private fun SettingsScreen(
 private fun AutoSwitchCard(
     enabled: Boolean,
     status: String,
+    lastCheck: Long,
+    restoreMode: Int,
+    actionModeA: Int,
+    actionModeB: Int,
+    onRestoreModeChange: (Int) -> Unit,
+    onActionModeAChange: (Int) -> Unit,
+    onActionModeBChange: (Int) -> Unit,
     detectionMode: DetectionMode,
     pollIntervalSec: Int,
     onDetectionModeChange: (DetectionMode) -> Unit,
     onPollIntervalChange: (Int) -> Unit,
+    probeEnabled: Boolean,
+    probeIntervalMin: Int,
+    onProbeEnabledChange: (Boolean) -> Unit,
+    onProbeIntervalChange: (Int) -> Unit,
     diagnostics: String?,
     diagnosticsRunning: Boolean,
     onEnabledChange: (Boolean) -> Unit,
@@ -189,6 +218,38 @@ private fun AutoSwitchCard(
             )
 
             Spacer(modifier = Modifier.height(16.dp))
+            ModeDropdown(
+                label = stringResource(R.string.restore_target_title),
+                selectedValue = restoreMode,
+                onSelected = onRestoreModeChange,
+                noneLabel = stringResource(R.string.restore_target_previous)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.notification_buttons_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = stringResource(R.string.notification_buttons_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ModeDropdown(
+                label = stringResource(R.string.notification_button_1),
+                selectedValue = actionModeA,
+                onSelected = onActionModeAChange
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ModeDropdown(
+                label = stringResource(R.string.notification_button_2),
+                selectedValue = actionModeB,
+                onSelected = onActionModeBChange
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
             Text(
                 text = stringResource(R.string.detect_how),
                 style = MaterialTheme.typography.titleMedium,
@@ -220,6 +281,41 @@ private fun AutoSwitchCard(
                 )
             }
 
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.probe_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.probe_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Switch(checked = probeEnabled, onCheckedChange = onProbeEnabledChange)
+            }
+            if (probeEnabled) {
+                var probeValue by remember(probeIntervalMin) { mutableFloatStateOf(probeIntervalMin.toFloat()) }
+                Text(
+                    text = stringResource(R.string.probe_every, probeValue.toInt()),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Slider(
+                    value = probeValue,
+                    onValueChange = { probeValue = it },
+                    onValueChangeFinished = { onProbeIntervalChange(probeValue.toInt()) },
+                    valueRange = AutoSwitchPreferences.MIN_PROBE_MIN.toFloat()..AutoSwitchPreferences.MAX_PROBE_MIN.toFloat()
+                )
+            }
+
             val context = LocalContext.current
             val powerManager = context.getSystemService(PowerManager::class.java)
             if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
@@ -245,6 +341,17 @@ private fun AutoSwitchCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium
                 )
+                if (lastCheck > 0L) {
+                    Text(
+                        text = stringResource(
+                            R.string.last_check,
+                            java.text.DateFormat.getTimeInstance(java.text.DateFormat.MEDIUM)
+                                .format(java.util.Date(lastCheck))
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))

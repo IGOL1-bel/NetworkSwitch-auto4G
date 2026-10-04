@@ -40,6 +40,44 @@ class AutoSwitchViewModel @Inject constructor(
     val pollIntervalSec: StateFlow<Int> = autoSwitchPreferences.pollIntervalSec
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_POLL_SEC)
 
+    val lastCheck: StateFlow<Long> = autoSwitchPreferences.lastCheck
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+    val restoreMode: StateFlow<Int> = autoSwitchPreferences.restoreMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.RESTORE_PREVIOUS)
+
+    val actionModeA: StateFlow<Int> = autoSwitchPreferences.actionModeA
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_ACTION_A)
+
+    val actionModeB: StateFlow<Int> = autoSwitchPreferences.actionModeB
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_ACTION_B)
+
+    fun setRestoreMode(mode: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setRestoreMode(mode) }
+    }
+
+    fun setActionModeA(mode: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setActionModeA(mode) }
+    }
+
+    fun setActionModeB(mode: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setActionModeB(mode) }
+    }
+
+    val probeEnabled: StateFlow<Boolean> = autoSwitchPreferences.probeEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val probeIntervalMin: StateFlow<Int> = autoSwitchPreferences.probeIntervalMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_PROBE_MIN)
+
+    fun setProbeEnabled(value: Boolean) {
+        viewModelScope.launch { autoSwitchPreferences.setProbeEnabled(value) }
+    }
+
+    fun setProbeIntervalMin(minutes: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setProbeIntervalMin(minutes) }
+    }
+
     fun setDetectionMode(mode: DetectionMode) {
         viewModelScope.launch { autoSwitchPreferences.setDetectionMode(mode) }
     }
