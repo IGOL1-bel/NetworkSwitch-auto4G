@@ -119,4 +119,12 @@
     <string name="probe_desc">Телефон на 3G или 2G не может показать VoLTE. Время от времени приложение ненадолго включает «Только 4G» для проверки и возвращает режим, если VoLTE нет. Возможны короткие обрывы связи. Во время звонка проба не запускается.</string>
     <string name="probe_every">Пробовать каждые %1$d мин</string>
     <string name="last_check">Последняя проверка: %1$s</string>
+    <string name="restore_target_title">Когда VoLTE пропадает, включить режим</string>
+    <string name="restore_target_previous">Тот, что был до переключения</string>
+    <string name="notification_buttons_title">Кнопки в уведомлении</string>
+    <string name="notification_buttons_desc">Два режима сети, которые можно выбрать прямо из уведомления. После выбора автопереключение приостанавливается до смены состояния VoLTE.</string>
+    <string name="notification_button_1">Кнопка 1</string>
+    <string name="notification_button_2">Кнопка 2</string>
+    <string name="status_manual_hold">Выбрано вручную: %1$s — автопереключение приостановлено до смены VoLTE</string>
+    <string name="status_manual_failed">Не удалось включить режим «%1$s»</string>
 </resources>

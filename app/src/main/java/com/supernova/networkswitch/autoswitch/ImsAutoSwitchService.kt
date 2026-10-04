@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.autoswitch
 
+import android.graphics.drawable.Icon
 import android.app.AlarmManager
 import kotlinx.coroutines.flow.first
 import android.os.SystemClock
@@ -85,6 +86,17 @@ class ImsAutoSwitchService : Service() {
 
     private var lastCheckShownAt = 0L
 
+    /** Modes of the two notification buttons; kept current by a collector. */
+    @Volatile
+    private var actionModes = AutoSwitchPreferences.DEFAULT_ACTION_A to AutoSwitchPreferences.DEFAULT_ACTION_B
+
+    /**
+     * After a button press the auto-switch keeps its hands off until the VoLTE state differs
+     * from what it was then: otherwise it would undo the choice within seconds.
+     */
+    private var holdSample: Int? = null
+    private var manualMode = -1
+
     private val alarmManager by lazy { getSystemService(AlarmManager::class.java) }
 
     private val heartbeatIntent by lazy {
@@ -134,6 +146,10 @@ class ImsAutoSwitchService : Service() {
             autoSwitchPreferences.setSavedMode(mode, subId)
         },
         failureCooldown = FAILURE_COOLDOWN_SAMPLES,
+        restoreTarget = { previous ->
+            val chosen = autoSwitchPreferences.restoreModeNow()
+            if (chosen == AutoSwitchPreferences.RESTORE_PREVIOUS) previous else chosen
+        },
     )
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -143,9 +159,14 @@ class ImsAutoSwitchService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_SET_MODE) {
+            val mode = intent.getIntExtra(EXTRA_MODE, -1)
+            if (mode >= 0) scope.launch { applyManualMode(mode) }
+        }
         if (!watching) {
             watching = true
             scope.launch { observeEnabled() }
+            scope.launch { observeActionModes() }
         } else if (intent?.action == ACTION_HEARTBEAT) {
             // The alarm woke the process: run a check now instead of waiting for a timer that
             // may have been stuck while the phone slept.
@@ -298,6 +319,15 @@ class ImsAutoSwitchService : Service() {
             publish(getString(R.string.status_no_data_sim))
             return
         }
+        holdSample?.let { held ->
+            val now = imsStateProvider.volteState(subId)
+            val known = now == ImsSwitchEngine.SAMPLE_VOLTE || now == ImsSwitchEngine.SAMPLE_NO_VOLTE
+            if (!known || now == held) {
+                publish(getString(R.string.status_manual_hold, modeName(manualMode)))
+                return
+            }
+            holdSample = null
+        }
         if (autoSwitchPreferences.hasSavedMode()) {
             val savedSub = autoSwitchPreferences.savedSubId()
             if (savedSub >= 0 && savedSub != subId) {
@@ -391,7 +421,7 @@ class ImsAutoSwitchService : Service() {
         NetworkMode.fromValue(mode)?.label(this) ?: mode.toString()
 
     /** Words an engine result for the notification and the settings card. */
-    private fun describe(status: ImsSwitchEngine.Status): String {
+    private suspend fun describe(status: ImsSwitchEngine.Status): String {
         val mode = modeName(status.mode)
         return when (status.code) {
             ImsSwitchEngine.Code.STATE_UNKNOWN -> getString(R.string.status_unknown)
@@ -404,7 +434,10 @@ class ImsAutoSwitchService : Service() {
             ImsSwitchEngine.Code.RESTORE_FAILED -> getString(R.string.status_restore_failed, mode)
             ImsSwitchEngine.Code.CHANGED_MEANWHILE -> getString(R.string.status_changed_meanwhile)
             ImsSwitchEngine.Code.VOLTE_DETECTED -> getString(R.string.status_volte_detected)
-            ImsSwitchEngine.Code.LOST_RESTORING_SOON -> getString(R.string.status_lost_restoring, mode)
+            ImsSwitchEngine.Code.LOST_RESTORING_SOON -> {
+                val chosen = autoSwitchPreferences.restoreModeNow()
+                getString(R.string.status_lost_restoring, if (chosen == AutoSwitchPreferences.RESTORE_PREVIOUS) mode else modeName(chosen))
+            }
             ImsSwitchEngine.Code.NO_VOLTE_IDLE -> getString(R.string.status_no_volte)
             ImsSwitchEngine.Code.PROBE_NO_VOLTE -> getString(R.string.status_probe_no_volte, mode)
         }
@@ -459,6 +492,69 @@ class ImsAutoSwitchService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
+    private fun modeAction(mode: Int, requestCode: Int): Notification.Action {
+        val pending = PendingIntent.getService(
+            this,
+            ACTION_REQUEST_BASE + requestCode,
+            Intent(this, ImsAutoSwitchService::class.java)
+                .setAction(ACTION_SET_MODE)
+                .putExtra(EXTRA_MODE, mode),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Action.Builder(
+            Icon.createWithResource(this, R.drawable.ic_5g_big),
+            modeName(mode),
+            pending,
+        ).build()
+    }
+
+    private suspend fun observeActionModes() {
+        combine(autoSwitchPreferences.actionModeA, autoSwitchPreferences.actionModeB) { a, b -> a to b }
+            .distinctUntilChanged()
+            .collect { modes ->
+                actionModes = modes
+                refreshNotification()
+            }
+    }
+
+    /** Re-posts the notification with the current text and buttons, keeping the shown check time. */
+    private fun refreshNotification() {
+        val whenMs = lastCheckShownAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+        getSystemService(NotificationManager::class.java).notify(
+            NOTIFICATION_ID,
+            buildNotification(lastStatus.ifEmpty { getString(R.string.notification_watching) }, whenMs),
+        )
+    }
+
+    /**
+     * A notification button: sets [mode] by hand and pauses the auto-switch until the VoLTE state
+     * changes. A pending restore is dropped, since the user has now chosen what the phone does.
+     */
+    private suspend fun applyManualMode(mode: Int) {
+        val target = NetworkMode.fromValue(mode) ?: return
+        val subId = currentSubId()
+        if (subId < 0) return
+        try {
+            if (autoSwitchPreferences.hasSavedMode()) {
+                val savedSub = autoSwitchPreferences.savedSubId()
+                // Another SIM was held on 4G only: give that one its mode back first.
+                if (savedSub >= 0 && savedSub != subId) engine.restoreIfActive()
+                autoSwitchPreferences.setSavedMode(ImsSwitchEngine.NO_SAVED_MODE, -1)
+            }
+            manualMode = mode
+            holdSample = imsStateProvider.volteState(subId)
+            val ok = networkControlRepository.setNetworkMode(subId, target).isSuccess
+            publish(
+                if (ok) getString(R.string.status_manual_hold, modeName(mode))
+                else getString(R.string.status_manual_failed, modeName(mode))
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e(TAG, "Manual mode change failed", e)
+        }
+    }
+
     private fun buildNotification(text: String, whenMs: Long = System.currentTimeMillis()): Notification {
         val openApp = PendingIntent.getActivity(
             this,
@@ -474,6 +570,8 @@ class ImsAutoSwitchService : Service() {
             .setWhen(whenMs)
             .setShowWhen(true)
             .setOngoing(true)
+            .addAction(modeAction(actionModes.first, 1))
+            .addAction(modeAction(actionModes.second, 2))
             .build()
     }
 
@@ -504,6 +602,9 @@ class ImsAutoSwitchService : Service() {
         private const val PROBE_ATTEMPTS = 8
         private const val PROBE_WAKE_MS = 60_000L
 
+        private const val ACTION_SET_MODE = "com.supernova.networkswitch.SET_MODE"
+        private const val EXTRA_MODE = "mode"
+        private const val ACTION_REQUEST_BASE = 100
         private const val ACTION_HEARTBEAT = "com.supernova.networkswitch.HEARTBEAT"
         private const val HEARTBEAT_REQUEST_CODE = 7
         private const val HEARTBEAT_MS = 3 * 60_000L

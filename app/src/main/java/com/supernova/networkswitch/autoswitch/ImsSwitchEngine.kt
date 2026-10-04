@@ -29,18 +29,32 @@ class ImsSwitchEngine(
     private val storeSavedMode: suspend (Int) -> Unit,
     private val confirmations: Int = DEFAULT_CONFIRMATIONS,
     private val failureCooldown: Int = DEFAULT_FAILURE_COOLDOWN,
+    /** Maps the saved previous mode to the mode to restore, e.g. a default chosen by the user. */
+    private val restoreTarget: suspend (Int) -> Int = { it },
 ) {
 
     private var lastSample = SAMPLE_UNKNOWN
     private var streak = 0
     private var cooldown = 0
+    private var unknownStreak = 0
 
     /** Consumes one sample and returns what the situation is, for the caller to word. */
-    suspend fun onSample(sample: Int): Status {
+    suspend fun onSample(rawSample: Int): Status {
+        var sample = rawSample
         if (sample != SAMPLE_VOLTE && sample != SAMPLE_NO_VOLTE) {
-            lastSample = SAMPLE_UNKNOWN
-            streak = 0
-            return Status(Code.STATE_UNKNOWN)
+            unknownStreak++
+            // Held on 4G only and the state stays unreadable for a while, e.g. because 4G is gone
+            // and the phone has no service at all: that is as good as "no VoLTE", and waiting for
+            // a readable answer would leave the phone without a network.
+            if (unknownStreak >= UNKNOWN_AS_NO_VOLTE && loadSavedMode() != NO_SAVED_MODE) {
+                sample = SAMPLE_NO_VOLTE
+            } else {
+                lastSample = SAMPLE_UNKNOWN
+                streak = 0
+                return Status(Code.STATE_UNKNOWN)
+            }
+        } else {
+            unknownStreak = 0
         }
         streak = if (sample == lastSample) minOf(streak + 1, confirmations) else 1
         lastSample = sample
@@ -96,6 +110,7 @@ class ImsSwitchEngine(
     }
 
     private suspend fun restore(saved: Int): Status = withContext(NonCancellable) {
+        val target = restoreTarget(saved)
         val current = readMode()
         if (current != null && current != LTE_ONLY) {
             // Someone else changed the mode while we were holding 4G only (the user, the tile,
@@ -103,12 +118,12 @@ class ImsSwitchEngine(
             storeSavedMode(NO_SAVED_MODE)
             return@withContext Status(Code.CHANGED_MEANWHILE)
         }
-        if (writeMode(saved) || readMode() == saved) {
+        if (writeMode(target) || readMode() == target) {
             storeSavedMode(NO_SAVED_MODE)
-            Status(Code.RESTORED, saved)
+            Status(Code.RESTORED, target)
         } else {
             cooldown = failureCooldown
-            Status(Code.RESTORE_FAILED, saved)
+            Status(Code.RESTORE_FAILED, target)
         }
     }
 
@@ -166,7 +181,7 @@ class ImsSwitchEngine(
         return when {
             sample == SAMPLE_VOLTE && active -> Status(Code.ACTIVE, saved)
             sample == SAMPLE_VOLTE -> Status(Code.VOLTE_DETECTED)
-            active -> Status(Code.LOST_RESTORING_SOON, saved)
+            active -> Status(Code.LOST_RESTORING_SOON, saved)  // the service words it with the restore target
             else -> Status(Code.NO_VOLTE_IDLE)
         }
     }
@@ -199,6 +214,9 @@ class ImsSwitchEngine(
         const val NO_SAVED_MODE = -1
 
         const val DEFAULT_CONFIRMATIONS = 2
+
+        /** Unreadable samples in a row, while held on 4G only, that count as "no VoLTE". */
+        const val UNKNOWN_AS_NO_VOLTE = 4
 
         /** Samples to sit out after a failed switch before trying again. */
         const val DEFAULT_FAILURE_COOLDOWN = 6

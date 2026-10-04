@@ -1,5 +1,6 @@
 package com.supernova.networkswitch.presentation.ui.activity
 
+import com.supernova.networkswitch.presentation.ui.composable.ModeDropdown
 import com.supernova.networkswitch.R
 import androidx.compose.ui.res.stringResource
 import android.Manifest
@@ -78,6 +79,9 @@ private fun SettingsScreen(
     val pollIntervalSec by autoSwitchViewModel.pollIntervalSec.collectAsState()
     val probeEnabled by autoSwitchViewModel.probeEnabled.collectAsState()
     val lastCheck by autoSwitchViewModel.lastCheck.collectAsState()
+    val restoreMode by autoSwitchViewModel.restoreMode.collectAsState()
+    val actionModeA by autoSwitchViewModel.actionModeA.collectAsState()
+    val actionModeB by autoSwitchViewModel.actionModeB.collectAsState()
     val probeIntervalMin by autoSwitchViewModel.probeIntervalMin.collectAsState()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
@@ -121,6 +125,12 @@ private fun SettingsScreen(
                 enabled = autoSwitchEnabled,
                 status = autoSwitchStatus,
                 lastCheck = lastCheck,
+                restoreMode = restoreMode,
+                actionModeA = actionModeA,
+                actionModeB = actionModeB,
+                onRestoreModeChange = { autoSwitchViewModel.setRestoreMode(it) },
+                onActionModeAChange = { autoSwitchViewModel.setActionModeA(it) },
+                onActionModeBChange = { autoSwitchViewModel.setActionModeB(it) },
                 detectionMode = detectionMode,
                 pollIntervalSec = pollIntervalSec,
                 onDetectionModeChange = { autoSwitchViewModel.setDetectionMode(it) },
@@ -157,6 +167,12 @@ private fun AutoSwitchCard(
     enabled: Boolean,
     status: String,
     lastCheck: Long,
+    restoreMode: Int,
+    actionModeA: Int,
+    actionModeB: Int,
+    onRestoreModeChange: (Int) -> Unit,
+    onActionModeAChange: (Int) -> Unit,
+    onActionModeBChange: (Int) -> Unit,
     detectionMode: DetectionMode,
     pollIntervalSec: Int,
     onDetectionModeChange: (DetectionMode) -> Unit,
@@ -199,6 +215,38 @@ private fun AutoSwitchCard(
                 text = stringResource(R.string.auto_switch_card_desc),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            ModeDropdown(
+                label = stringResource(R.string.restore_target_title),
+                selectedValue = restoreMode,
+                onSelected = onRestoreModeChange,
+                noneLabel = stringResource(R.string.restore_target_previous)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.notification_buttons_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = stringResource(R.string.notification_buttons_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ModeDropdown(
+                label = stringResource(R.string.notification_button_1),
+                selectedValue = actionModeA,
+                onSelected = onActionModeAChange
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ModeDropdown(
+                label = stringResource(R.string.notification_button_2),
+                selectedValue = actionModeB,
+                onSelected = onActionModeBChange
             )
 
             Spacer(modifier = Modifier.height(16.dp))

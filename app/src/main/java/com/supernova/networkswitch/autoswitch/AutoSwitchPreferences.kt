@@ -63,6 +63,34 @@ class AutoSwitchPreferences @Inject constructor(
         dataStore.edit { it[PROBE_INTERVAL_KEY] = minutes.coerceIn(MIN_PROBE_MIN, MAX_PROBE_MIN) }
     }
 
+    /** RIL mode to return to when VoLTE is gone, or [RESTORE_PREVIOUS] for "whatever was set before". */
+    val restoreMode: Flow<Int> = dataStore.data
+        .map { it[RESTORE_MODE_KEY] ?: RESTORE_PREVIOUS }
+        .distinctUntilChanged()
+
+    suspend fun restoreModeNow(): Int = restoreMode.first()
+
+    suspend fun setRestoreMode(mode: Int) {
+        dataStore.edit { it[RESTORE_MODE_KEY] = mode }
+    }
+
+    /** The two modes offered as buttons in the notification. */
+    val actionModeA: Flow<Int> = dataStore.data
+        .map { it[ACTION_A_KEY] ?: DEFAULT_ACTION_A }
+        .distinctUntilChanged()
+
+    val actionModeB: Flow<Int> = dataStore.data
+        .map { it[ACTION_B_KEY] ?: DEFAULT_ACTION_B }
+        .distinctUntilChanged()
+
+    suspend fun setActionModeA(mode: Int) {
+        dataStore.edit { it[ACTION_A_KEY] = mode }
+    }
+
+    suspend fun setActionModeB(mode: Int) {
+        dataStore.edit { it[ACTION_B_KEY] = mode }
+    }
+
     suspend fun isEnabled(): Boolean = enabled.first()
 
     suspend fun setEnabled(value: Boolean) {
@@ -106,12 +134,21 @@ class AutoSwitchPreferences @Inject constructor(
         const val MIN_PROBE_MIN = 1
         const val MAX_PROBE_MIN = 60
         const val DEFAULT_PROBE_MIN = 5
+
+        const val RESTORE_PREVIOUS = -1
+
+        /** 4G only, and 2G/3G/4G. */
+        const val DEFAULT_ACTION_A = 11
+        const val DEFAULT_ACTION_B = 9
         private const val EVENTS_VALUE = "events"
         private const val POLLING_VALUE = "polling"
 
         private val PROBE_ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_probe_enabled")
         private val PROBE_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_probe_interval_min")
         private val LAST_CHECK_KEY = longPreferencesKey("volte_auto_switch_last_check")
+        private val RESTORE_MODE_KEY = intPreferencesKey("volte_auto_switch_restore_mode")
+        private val ACTION_A_KEY = intPreferencesKey("volte_auto_switch_action_a")
+        private val ACTION_B_KEY = intPreferencesKey("volte_auto_switch_action_b")
         private val MODE_KEY = stringPreferencesKey("volte_auto_switch_detection_mode")
         private val POLL_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_poll_interval_sec")
         private val ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_enabled")

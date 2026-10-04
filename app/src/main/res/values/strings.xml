@@ -125,4 +125,12 @@
     <string name="probe_desc">A phone on 3G or 2G cannot show VoLTE. From time to time this briefly switches to 4G only to check, and goes back if there is no VoLTE. Short connection drops are possible. Never during a call.</string>
     <string name="probe_every">Try every %1$d min</string>
     <string name="last_check">Last check: %1$s</string>
+    <string name="restore_target_title">When VoLTE is gone, switch to</string>
+    <string name="restore_target_previous">The mode that was set before</string>
+    <string name="notification_buttons_title">Notification buttons</string>
+    <string name="notification_buttons_desc">Two network modes you can pick straight from the notification. Choosing one pauses the auto-switch until the VoLTE state changes.</string>
+    <string name="notification_button_1">Button 1</string>
+    <string name="notification_button_2">Button 2</string>
+    <string name="status_manual_hold">Set by hand: %1$s - auto-switch paused until VoLTE changes</string>
+    <string name="status_manual_failed">Could not set %1$s</string>
 </resources>
