@@ -63,6 +63,31 @@ class AutoSwitchPreferences @Inject constructor(
         dataStore.edit { it[PROBE_INTERVAL_KEY] = minutes.coerceIn(MIN_PROBE_MIN, MAX_PROBE_MIN) }
     }
 
+    val quietEnabled: Flow<Boolean> = dataStore.data
+        .map { it[QUIET_ENABLED_KEY] ?: false }
+        .distinctUntilChanged()
+
+    /** Minutes after midnight. */
+    val quietStartMin: Flow<Int> = dataStore.data
+        .map { (it[QUIET_START_KEY] ?: DEFAULT_QUIET_START).coerceIn(0, 1439) }
+        .distinctUntilChanged()
+
+    val quietEndMin: Flow<Int> = dataStore.data
+        .map { (it[QUIET_END_KEY] ?: DEFAULT_QUIET_END).coerceIn(0, 1439) }
+        .distinctUntilChanged()
+
+    suspend fun setQuietEnabled(value: Boolean) {
+        dataStore.edit { it[QUIET_ENABLED_KEY] = value }
+    }
+
+    suspend fun setQuietStartMin(minutes: Int) {
+        dataStore.edit { it[QUIET_START_KEY] = minutes.coerceIn(0, 1439) }
+    }
+
+    suspend fun setQuietEndMin(minutes: Int) {
+        dataStore.edit { it[QUIET_END_KEY] = minutes.coerceIn(0, 1439) }
+    }
+
     /** RIL mode to return to when VoLTE is gone, or [RESTORE_PREVIOUS] for "whatever was set before". */
     val restoreMode: Flow<Int> = dataStore.data
         .map { it[RESTORE_MODE_KEY] ?: RESTORE_PREVIOUS }
@@ -143,6 +168,11 @@ class AutoSwitchPreferences @Inject constructor(
         private const val EVENTS_VALUE = "events"
         private const val POLLING_VALUE = "polling"
 
+        const val DEFAULT_QUIET_START = 23 * 60
+        const val DEFAULT_QUIET_END = 6 * 60
+        private val QUIET_ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_quiet_enabled")
+        private val QUIET_START_KEY = intPreferencesKey("volte_auto_switch_quiet_start_min")
+        private val QUIET_END_KEY = intPreferencesKey("volte_auto_switch_quiet_end_min")
         private val PROBE_ENABLED_KEY = booleanPreferencesKey("volte_auto_switch_probe_enabled")
         private val PROBE_INTERVAL_KEY = intPreferencesKey("volte_auto_switch_probe_interval_min")
         private val LAST_CHECK_KEY = longPreferencesKey("volte_auto_switch_last_check")

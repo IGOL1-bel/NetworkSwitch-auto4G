@@ -86,6 +86,9 @@ private fun SettingsScreen(
     val actionModeA by autoSwitchViewModel.actionModeA.collectAsState()
     val actionModeB by autoSwitchViewModel.actionModeB.collectAsState()
     val probeIntervalMin by autoSwitchViewModel.probeIntervalMin.collectAsState()
+    val quietEnabled by autoSwitchViewModel.quietEnabled.collectAsState()
+    val quietStartMin by autoSwitchViewModel.quietStartMin.collectAsState()
+    val quietEndMin by autoSwitchViewModel.quietEndMin.collectAsState()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -142,6 +145,12 @@ private fun SettingsScreen(
                 probeIntervalMin = probeIntervalMin,
                 onProbeEnabledChange = { autoSwitchViewModel.setProbeEnabled(it) },
                 onProbeIntervalChange = { autoSwitchViewModel.setProbeIntervalMin(it) },
+                quietEnabled = quietEnabled,
+                quietStartMin = quietStartMin,
+                quietEndMin = quietEndMin,
+                onQuietEnabledChange = { autoSwitchViewModel.setQuietEnabled(it) },
+                onQuietStartChange = { autoSwitchViewModel.setQuietStartMin(it) },
+                onQuietEndChange = { autoSwitchViewModel.setQuietEndMin(it) },
                 diagnostics = autoSwitchViewModel.diagnostics,
                 diagnosticsRunning = autoSwitchViewModel.diagnosticsRunning,
                 onEnabledChange = { enable ->
@@ -186,6 +195,12 @@ private fun AutoSwitchCard(
     probeIntervalMin: Int,
     onProbeEnabledChange: (Boolean) -> Unit,
     onProbeIntervalChange: (Int) -> Unit,
+    quietEnabled: Boolean,
+    quietStartMin: Int,
+    quietEndMin: Int,
+    onQuietEnabledChange: (Boolean) -> Unit,
+    onQuietStartChange: (Int) -> Unit,
+    onQuietEndChange: (Int) -> Unit,
     diagnostics: String?,
     diagnosticsRunning: Boolean,
     onEnabledChange: (Boolean) -> Unit,
@@ -319,6 +334,44 @@ private fun AutoSwitchCard(
                     onValueChangeFinished = { onProbeIntervalChange(probeValue.toInt()) },
                     valueRange = AutoSwitchPreferences.MIN_PROBE_MIN.toFloat()..AutoSwitchPreferences.MAX_PROBE_MIN.toFloat()
                 )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.quiet_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.quiet_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Switch(checked = quietEnabled, onCheckedChange = onQuietEnabledChange)
+            }
+            if (quietEnabled) {
+                val quietContext = LocalContext.current
+                fun pickTime(current: Int, onPicked: (Int) -> Unit) {
+                    android.app.TimePickerDialog(
+                        quietContext,
+                        { _, hour, minute -> onPicked(hour * 60 + minute) },
+                        current / 60,
+                        current % 60,
+                        true
+                    ).show()
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { pickTime(quietStartMin, onQuietStartChange) }) {
+                        Text(stringResource(R.string.quiet_from, formatMinutes(quietStartMin)))
+                    }
+                    OutlinedButton(onClick = { pickTime(quietEndMin, onQuietEndChange) }) {
+                        Text(stringResource(R.string.quiet_to, formatMinutes(quietEndMin)))
+                    }
+                }
             }
 
             val context = LocalContext.current
@@ -736,3 +789,6 @@ private fun LinkItem(
         )
     }
 }
+
+
+private fun formatMinutes(minutes: Int): String = "%02d:%02d".format(minutes / 60, minutes % 60)

@@ -141,4 +141,9 @@
     <string name="log_saved">Сохранено в Загрузки: %1$s</string>
     <string name="log_save_failed">Не удалось сохранить журнал</string>
     <string name="log_cleared">Журнал очищен</string>
+    <string name="quiet_title">Тихие часы</string>
+    <string name="quiet_desc">В это время VoLTE не проверяется — экономия заряда. С началом периода режим «Только 4G» возвращается.</string>
+    <string name="quiet_from">С %1$s</string>
+    <string name="quiet_to">До %1$s</string>
+    <string name="status_quiet">Тихие часы: VoLTE не проверяется до %1$s</string>
 </resources>

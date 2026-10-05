@@ -70,6 +70,27 @@ class AutoSwitchViewModel @Inject constructor(
     val probeIntervalMin: StateFlow<Int> = autoSwitchPreferences.probeIntervalMin
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_PROBE_MIN)
 
+    val quietEnabled: StateFlow<Boolean> = autoSwitchPreferences.quietEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val quietStartMin: StateFlow<Int> = autoSwitchPreferences.quietStartMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_QUIET_START)
+
+    val quietEndMin: StateFlow<Int> = autoSwitchPreferences.quietEndMin
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), AutoSwitchPreferences.DEFAULT_QUIET_END)
+
+    fun setQuietEnabled(value: Boolean) {
+        viewModelScope.launch { autoSwitchPreferences.setQuietEnabled(value) }
+    }
+
+    fun setQuietStartMin(minutes: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setQuietStartMin(minutes) }
+    }
+
+    fun setQuietEndMin(minutes: Int) {
+        viewModelScope.launch { autoSwitchPreferences.setQuietEndMin(minutes) }
+    }
+
     fun setProbeEnabled(value: Boolean) {
         viewModelScope.launch { autoSwitchPreferences.setProbeEnabled(value) }
     }

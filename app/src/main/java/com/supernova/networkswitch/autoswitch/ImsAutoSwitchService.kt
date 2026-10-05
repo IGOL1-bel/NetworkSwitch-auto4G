@@ -7,6 +7,7 @@ import android.graphics.drawable.Icon
 import android.app.AlarmManager
 import kotlinx.coroutines.flow.first
 import android.os.SystemClock
+import java.time.LocalTime
 import android.media.AudioManager
 import android.app.Notification
 import android.app.NotificationChannel
@@ -39,6 +40,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -189,12 +191,13 @@ class ImsAutoSwitchService : Service() {
             watching = true
             scope.launch { observeEnabled() }
             scope.launch { observeActionModes() }
+            scope.launch { observeQuietHours() }
             scope.launch { logSnapshot() }
         } else if (intent?.action == ACTION_HEARTBEAT) {
             // The alarm woke the process: run a check now instead of waiting for a timer that
             // may have been stuck while the phone slept. The next alarm is set straight away: if
             // this check stalls in CPU sleep, the chain of alarms must not end with it.
-            scheduleHeartbeat(HEARTBEAT_MS)
+            if (!quietNow) scheduleHeartbeat(HEARTBEAT_MS)
             val pm = getSystemService(PowerManager::class.java)
             AppLog.i("heartbeat: doze=${pm.isDeviceIdleMode} interactive=${pm.isInteractive}")
             eventWakeLock.acquire(EVENT_WAKE_MS)
@@ -243,6 +246,10 @@ class ImsAutoSwitchService : Service() {
         var quick = false
         var lastRegisterAt = -WATCHDOG_MS
         while (true) {
+            if (waitOutQuietHours()) {
+                timedOut = true
+                quick = false
+            }
             try {
                 val subId = currentSubId()
                 val now = SystemClock.elapsedRealtime()
@@ -294,6 +301,11 @@ class ImsAutoSwitchService : Service() {
         pollWakeLock.acquire()
         try {
             while (true) {
+                if (quietRemainingMs() > 0) {
+                    if (pollWakeLock.isHeld) pollWakeLock.release()
+                    waitOutQuietHours()
+                    pollWakeLock.acquire()
+                }
                 try {
                     sampleOnce()
                 } catch (e: CancellationException) {
@@ -330,6 +342,77 @@ class ImsAutoSwitchService : Service() {
         } catch (e: Exception) {
             AppLog.w("Could not schedule the heartbeat alarm", e)
         }
+    }
+
+    @Volatile private var quietNow = false
+
+    /** Milliseconds until the quiet period ends, or 0 when it is off or not in effect now. */
+    private suspend fun quietRemainingMs(): Long {
+        if (!autoSwitchPreferences.quietEnabled.first()) return 0
+        val startS = autoSwitchPreferences.quietStartMin.first() * 60
+        val endS = autoSwitchPreferences.quietEndMin.first() * 60
+        if (startS == endS) return 0
+        val nowS = LocalTime.now().toSecondOfDay()
+        val inside = if (startS < endS) nowS in startS until endS else nowS >= startS || nowS < endS
+        if (!inside) return 0
+        val left = if (endS > nowS) endS - nowS else endS + 24 * 3600 - nowS
+        return left * 1000L
+    }
+
+    /**
+     * During the quiet period nothing runs: the privileged callbacks are dropped, no alarm fires
+     * until the end, and a mode held on 4G only is handed back first, since nobody would be
+     * watching it. Returns true when it had to wait.
+     */
+    private suspend fun waitOutQuietHours(): Boolean {
+        var waited = false
+        while (true) {
+            val left = quietRemainingMs()
+            if (left <= 0) break
+            waited = true
+            if (!quietNow) {
+                quietNow = true
+                enterQuietHours(left)
+            }
+            scheduleHeartbeat(left + 2_000L)
+            withTimeoutOrNull(left + 1_000L) { events.receive() }
+        }
+        if (quietNow) {
+            quietNow = false
+            AppLog.i("quiet hours over, resuming")
+        }
+        return waited
+    }
+
+    private suspend fun enterQuietHours(leftMs: Long) {
+        AppLog.i("quiet hours: pausing for ${leftMs / 60_000} min")
+        holdSample = null
+        try {
+            if (autoSwitchPreferences.hasSavedMode()) {
+                engine.restoreIfActive()?.let { AppLog.i("quiet hours: ${it.code} mode=${it.mode}") }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLog.e("Restoring at the start of quiet hours failed", e)
+        }
+        imsStateProvider.stopEvents()
+        listening = false
+        registeredSubId = null
+        val end = autoSwitchPreferences.quietEndMin.first()
+        publish(getString(R.string.status_quiet, "%02d:%02d".format(end / 60, end % 60)))
+    }
+
+    /** A change of the quiet settings must take effect now, not when the loop next wakes. */
+    private suspend fun observeQuietHours() {
+        combine(
+            autoSwitchPreferences.quietEnabled,
+            autoSwitchPreferences.quietStartMin,
+            autoSwitchPreferences.quietEndMin,
+        ) { enabled, start, end -> Triple(enabled, start, end) }
+            .distinctUntilChanged()
+            .drop(1)
+            .collect { events.trySend(Unit) }
     }
 
     private suspend fun watchdogMs(): Long {
