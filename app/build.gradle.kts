@@ -15,8 +15,8 @@ android {
         targetSdk = 36
         // Bumping versionCode also makes Shizuku restart its user service, which it would
         // otherwise reuse with the old AIDL and miss the new IMS methods.
-        versionCode = 18
-        versionName = "1.0.17"
+        versionCode = 20
+        versionName = "1.0.19"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         

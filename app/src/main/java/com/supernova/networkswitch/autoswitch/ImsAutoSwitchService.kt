@@ -192,7 +192,11 @@ class ImsAutoSwitchService : Service() {
             scope.launch { logSnapshot() }
         } else if (intent?.action == ACTION_HEARTBEAT) {
             // The alarm woke the process: run a check now instead of waiting for a timer that
-            // may have been stuck while the phone slept.
+            // may have been stuck while the phone slept. The next alarm is set straight away: if
+            // this check stalls in CPU sleep, the chain of alarms must not end with it.
+            scheduleHeartbeat(HEARTBEAT_MS)
+            val pm = getSystemService(PowerManager::class.java)
+            AppLog.i("heartbeat: doze=${pm.isDeviceIdleMode} interactive=${pm.isInteractive}")
             eventWakeLock.acquire(EVENT_WAKE_MS)
             events.trySend(Unit)
         }
@@ -247,6 +251,7 @@ class ImsAutoSwitchService : Service() {
                     register(subId)
                     lastRegisterAt = now
                 }
+                scheduleHeartbeat(HEARTBEAT_MS)
                 evaluate(quick)
             } catch (e: CancellationException) {
                 throw e
@@ -425,6 +430,8 @@ class ImsAutoSwitchService : Service() {
         val sample = imsStateProvider.volteState(subId)
         val status = engine.onSample(sample)
         lastCode = status.code
+        // The phone just changed mode; do not follow up with a probe straight away.
+        if (status.code == ImsSwitchEngine.Code.RESTORED) lastProbeAt = SystemClock.elapsedRealtime()
         logSample(subId, sample, status)
         publish(describe(status))
         if (status.code == ImsSwitchEngine.Code.NO_VOLTE_IDLE) maybeProbe(subId)
@@ -454,6 +461,12 @@ class ImsAutoSwitchService : Service() {
         val now = SystemClock.elapsedRealtime()
         if (now - lastProbeAt < intervalMs) return
         if (getSystemService(AudioManager::class.java).mode != AudioManager.MODE_NORMAL) return
+        // In Doze the probe's short waits can stall for many minutes, which would leave the phone
+        // on 4G only unattended. Probe when the device is awake.
+        if (getSystemService(android.os.PowerManager::class.java).isDeviceIdleMode) {
+            AppLog.i("probe skipped: device is in Doze")
+            return
+        }
         lastProbeAt = now
 
         eventWakeLock.acquire(PROBE_WAKE_MS)
@@ -667,7 +680,8 @@ class ImsAutoSwitchService : Service() {
             "settings: enabled=${p.isEnabled()} detection=${p.detectionMode.first()} " +
                 "poll=${p.pollIntervalSec.first()}s probe=${p.probeEnabled.first()}/${p.probeIntervalMin.first()}min " +
                 "restore=${p.restoreModeNow()} buttons=${p.actionModeA.first()},${p.actionModeB.first()} " +
-                "saved=${p.savedMode()} savedSub=${p.savedSubId()} defaultSub=${currentSubId()}"
+                "saved=${p.savedMode()} savedSub=${p.savedSubId()} defaultSub=${currentSubId()} " +
+                "batteryUnrestricted=${getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)}"
         )
     }
 
